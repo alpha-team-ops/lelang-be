@@ -85,7 +85,7 @@ class AuthController extends Controller
                 'name' => 'required|string|min:2|max:100',
                 'email' => 'required|email|unique:users',
                 'password' => 'required|min:8',
-                'organizationCode' => 'required|exists:organizations,code',
+                'organizationCode' => 'nullable|exists:organizations,code',
             ]);
 
             // Validate password strength
@@ -108,9 +108,9 @@ class AuthController extends Controller
                     'name' => $validated['name'],
                     'email' => $validated['email'],
                     'password_hash' => $this->authService->hashPassword($validated['password']),
-                    'role' => 'MODERATOR',
+                    'role' => 'MEMBER',
                     'status' => 'ACTIVE',
-                    'organization_code' => $validated['organizationCode'],
+                    'organization_code' => $validated['organizationCode'] ?? null,
                 ]);
             });
 

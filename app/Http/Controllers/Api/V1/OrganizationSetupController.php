@@ -1,0 +1,236 @@
+<?php
+
+namespace App\Http\Controllers\Api\V1;
+
+use App\Models\Organization;
+use App\Models\User;
+use App\Http\Responses\ApiResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+
+class OrganizationSetupController
+{
+    /**
+     * Create a new organization
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function create(Request $request)
+    {
+        // Validate input
+        $validated = $request->validate([
+            'organizationName' => 'required|string|min:3|max:100',
+            'description' => 'nullable|string|max:500',
+        ], [
+            'organizationName.required' => 'Organization name is required',
+            'organizationName.min' => 'Organization name must be at least 3 characters',
+            'organizationName.max' => 'Organization name cannot exceed 100 characters',
+            'description.max' => 'Description cannot exceed 500 characters',
+        ]);
+
+        try {
+            return DB::transaction(function () use ($validated, $request) {
+                $user = $request->user();
+                $organizationName = trim($validated['organizationName']);
+
+                // Check if organization name already exists
+                if (Organization::where('name', $organizationName)->exists()) {
+                    return ApiResponse::error('Organization name already exists', 'ORG_NAME_EXISTS', 409);
+                }
+
+                // Generate unique organization code
+                $organizationCode = $this->generateOrganizationCode($organizationName);
+
+                // Create organization with default settings
+                $organization = Organization::create([
+                    'code' => $organizationCode,
+                    'name' => $organizationName,
+                    'description' => $validated['description'] ?? null,
+                    'timezone' => 'Asia/Jakarta',
+                    'currency' => 'IDR',
+                    'language' => 'id',
+                    'email_notifications' => true,
+                    'auction_notifications' => true,
+                    'bid_notifications' => true,
+                    'two_factor_auth' => false,
+                    'maintenance_mode' => false,
+                    'status' => 'active',
+                ]);
+
+                // Update user to be ADMIN of this organization
+                DB::table('users')
+                    ->where('id', $user->id)
+                    ->update([
+                        'organization_code' => $organizationCode,
+                        'role' => 'ADMIN',
+                        'updated_at' => now(),
+                    ]);
+
+                // Log audit action
+                $this->logAuditAction($user->id, 'create_organization', 'organization', $organizationCode, null, [
+                    'name' => $organizationName,
+                    'code' => $organizationCode,
+                    'created_by' => $user->id,
+                ]);
+
+                return ApiResponse::success(
+                    [
+                        'organizationCode' => $organization->code,
+                        'name' => $organization->name,
+                        'description' => $organization->description,
+                        'createdAt' => $organization->created_at?->toIso8601String(),
+                        'createdBy' => $user->id,
+                    ],
+                    'Organization created successfully'
+                );
+            });
+        } catch (\Exception $e) {
+            return ApiResponse::error('Failed to create organization: ' . $e->getMessage(), 'INTERNAL_ERROR', 500);
+        }
+    }
+
+    /**
+     * Join an existing organization
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function join(Request $request)
+    {
+        // Validate input
+        $validated = $request->validate([
+            'organizationCode' => 'required|string|regex:/^ORG-[A-Z0-9-]+$/|min:3|max:50',
+        ], [
+            'organizationCode.required' => 'Organization code is required',
+            'organizationCode.regex' => 'Organization code format is invalid (e.g., ORG-DERALY-001)',
+            'organizationCode.min' => 'Organization code must be at least 3 characters',
+            'organizationCode.max' => 'Organization code cannot exceed 50 characters',
+        ]);
+
+        try {
+            return DB::transaction(function () use ($validated, $request) {
+                $user = $request->user();
+                $organizationCode = strtoupper(trim($validated['organizationCode']));
+
+                // Check if user already has an organization
+                if ($user->organization_code !== null) {
+                    return ApiResponse::error(
+                        'You already belong to an organization',
+                        'USER_ALREADY_IN_ORG',
+                        409
+                    );
+                }
+
+                // Find organization
+                $organization = Organization::where('code', $organizationCode)->first();
+                if (!$organization) {
+                    return ApiResponse::error(
+                        'Organization not found',
+                        'ORG_NOT_FOUND',
+                        404
+                    );
+                }
+
+                // Check if organization is in maintenance mode
+                if ($organization->maintenance_mode) {
+                    return ApiResponse::error(
+                        'Cannot join this organization at the moment',
+                        'ORG_MAINTENANCE',
+                        403
+                    );
+                }
+
+                // Update user to join organization as MEMBER
+                DB::table('users')
+                    ->where('id', $user->id)
+                    ->update([
+                        'organization_code' => $organizationCode,
+                        'role' => 'MEMBER',
+                        'updated_at' => now(),
+                    ]);
+
+                // Log audit action
+                $this->logAuditAction($user->id, 'join_organization', 'organization', $organizationCode, null, [
+                    'organization_code' => $organizationCode,
+                    'user_id' => $user->id,
+                    'joined_at' => now()->toIso8601String(),
+                ]);
+
+                // TODO: Send notification to organization admins
+                // $this->notifyAdminsOfNewMember($organization, $user);
+
+                return ApiResponse::success(
+                    [
+                        'organizationCode' => $organization->code,
+                        'name' => $organization->name,
+                        'description' => $organization->description,
+                    ],
+                    'Successfully joined organization'
+                );
+            });
+        } catch (\Exception $e) {
+            return ApiResponse::error('Failed to join organization: ' . $e->getMessage(), 'INTERNAL_ERROR', 500);
+        }
+    }
+
+    /**
+     * Generate unique organization code
+     * Format: ORG-{FIRST 8 CHARS}-{SEQUENCE}
+     * Example: ORG-DERALY-001
+     * 
+     * @param string $organizationName
+     * @return string
+     */
+    private function generateOrganizationCode(string $organizationName): string
+    {
+        // Extract first 8 characters and convert to uppercase
+        $namePrefix = strtoupper(substr(str_replace(' ', '', $organizationName), 0, 8));
+        
+        // Remove any non-alphanumeric characters
+        $namePrefix = preg_replace('/[^A-Z0-9]/', '', $namePrefix);
+        
+        // Pad if necessary (in case name is shorter than 8 chars)
+        $namePrefix = str_pad($namePrefix, 8, 'X', STR_PAD_RIGHT);
+
+        // Find the next sequence number
+        $sequence = 1;
+        while (Organization::where('code', "ORG-{$namePrefix}-" . str_pad($sequence, 3, '0', STR_PAD_LEFT))->exists()) {
+            $sequence++;
+        }
+
+        return "ORG-{$namePrefix}-" . str_pad($sequence, 3, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Log audit action
+     * 
+     * @param string $userId
+     * @param string $action
+     * @param string $resourceType
+     * @param string|null $resourceId
+     * @param mixed $oldValue
+     * @param mixed $newValue
+     * @return void
+     */
+    private function logAuditAction(
+        string $userId,
+        string $action,
+        string $resourceType,
+        ?string $resourceId = null,
+        $oldValue = null,
+        $newValue = null
+    ): void {
+        // Use org_settings_history table for consistency with existing audit logging
+        DB::table('org_settings_history')->insert([
+            'id' => Str::uuid(),
+            'organization_code' => $resourceId,
+            'changed_by' => $userId,
+            'field_name' => $action,
+            'old_value' => $oldValue ? json_encode($oldValue) : null,
+            'new_value' => $newValue ? json_encode($newValue) : null,
+            'changed_at' => now(),
+        ]);
+    }
+}

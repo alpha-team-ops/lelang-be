@@ -42,9 +42,9 @@ return new class extends Migration
             $table->string('name', 100);
             $table->string('email', 100)->unique();
             $table->string('password_hash', 255);
-            $table->enum('role', ['ADMIN', 'MODERATOR'])->default('MODERATOR');
+            $table->enum('role', ['ADMIN', 'MODERATOR', 'MEMBER'])->default('MEMBER');
             $table->enum('status', ['ACTIVE', 'INACTIVE'])->default('ACTIVE');
-            $table->string('organization_code', 50);
+            $table->string('organization_code', 50)->nullable();
             $table->boolean('email_verified')->default(false);
             $table->timestamp('last_login')->nullable();
             $table->timestamps();

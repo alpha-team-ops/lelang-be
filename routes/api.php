@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\OrganizationController;
+use App\Http\Controllers\Api\V1\OrganizationSetupController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -29,5 +30,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/settings', [OrganizationController::class, 'getSettings']);
         Route::put('/settings', [OrganizationController::class, 'updateSettings']);
         Route::post('/logo', [OrganizationController::class, 'uploadLogo']);
+        Route::post('/create', [OrganizationSetupController::class, 'create']);
+        Route::post('/join', [OrganizationSetupController::class, 'join']);
     });
 });
