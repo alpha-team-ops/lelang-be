@@ -54,9 +54,13 @@ class AuthenticateApiToken
             $user->permissions = $decoded['permissions'];
         }
 
+        // Set user both ways for compatibility
         $request->setUserResolver(function () use ($user) {
             return $user;
         });
+        
+        // Also set as attribute for safe access
+        $request->attributes->set('user', $user);
 
         return $next($request);
     }

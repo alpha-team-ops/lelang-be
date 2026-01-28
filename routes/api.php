@@ -60,6 +60,17 @@ Route::prefix('v1')->group(function () {
         Route::delete('/{id}/unassign', [RoleController::class, 'unassignRole']);
     });
 
+    // Public Auction Routes (Portal) - MUST BE BEFORE PROTECTED ROUTES
+    Route::prefix('auctions/portal')->group(function () {
+        Route::get('/list', [AuctionController::class, 'portalList']);
+        Route::get('/{id}', [AuctionController::class, 'portalShow']);
+    });
+
+    Route::prefix('auctions')->group(function () {
+        Route::get('/search', [AuctionController::class, 'search']);
+        Route::get('/category/{category}', [AuctionController::class, 'getByCategory']);
+    });
+
     // Protected Auction Routes (Admin)
     Route::prefix('auctions')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
         Route::get('/', [AuctionController::class, 'index']);
@@ -68,13 +79,5 @@ Route::prefix('v1')->group(function () {
         Route::put('/{id}', [AuctionController::class, 'update']);
         Route::delete('/{id}', [AuctionController::class, 'destroy']);
         Route::get('/status/{status}', [AuctionController::class, 'getByStatus']);
-    });
-
-    // Public Auction Routes (Portal)
-    Route::prefix('auctions')->group(function () {
-        Route::get('/portal/list', [AuctionController::class, 'portalList']);
-        Route::get('/portal/{id}', [AuctionController::class, 'portalShow']);
-        Route::get('/search', [AuctionController::class, 'search']);
-        Route::get('/category/{category}', [AuctionController::class, 'getByCategory']);
     });
 });

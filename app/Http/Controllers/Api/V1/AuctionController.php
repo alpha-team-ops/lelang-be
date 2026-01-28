@@ -104,15 +104,18 @@ class AuctionController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        // Get user from request (set by middleware)
+        $user = $request->attributes->get('user') ?: auth()->user();
+        
         // Check permission
-        if (!$this->hasPermission('manage_auctions')) {
+        if (!$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = auth()->user()?->organization_code;
+        $orgCode = $user?->organization_code;
         if (!$orgCode) {
             return response()->json([
                 'success' => false,
@@ -203,15 +206,18 @@ class AuctionController extends Controller
      */
     public function update(string $id, Request $request): JsonResponse
     {
+        // Get user from request (set by middleware)
+        $user = $request->attributes->get('user') ?: auth()->user();
+        
         // Check permission
-        if (!$this->hasPermission('manage_auctions')) {
+        if (!$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = auth()->user()?->organization_code;
+        $orgCode = $user?->organization_code;
         $auction = Auction::where('id', $id)->where('organization_code', $orgCode)->first();
 
         if (!$auction) {
@@ -305,17 +311,20 @@ class AuctionController extends Controller
      * Delete auction
      * DELETE /api/v1/auctions/:id
      */
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
+        // Get user from request (set by middleware)
+        $user = $request->attributes->get('user') ?: auth()->user();
+        
         // Check permission
-        if (!$this->hasPermission('manage_auctions')) {
+        if (!$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = auth()->user()?->organization_code;
+        $orgCode = $user?->organization_code;
         $auction = Auction::where('id', $id)->where('organization_code', $orgCode)->first();
 
         if (!$auction) {
@@ -516,15 +525,18 @@ class AuctionController extends Controller
      */
     public function getByStatus(string $status, Request $request): JsonResponse
     {
+        // Get user from request (set by middleware)
+        $user = $request->attributes->get('user') ?: auth()->user();
+        
         // Check permission
-        if (!$this->hasPermission('manage_auctions')) {
+        if (!$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = auth()->user()?->organization_code;
+        $orgCode = $user?->organization_code;
         $validStatuses = ['DRAFT', 'SCHEDULED', 'LIVE', 'ENDING', 'ENDED', 'CANCELLED'];
 
         if (!in_array($status, $validStatuses)) {
@@ -560,14 +572,24 @@ class AuctionController extends Controller
     /**
      * Check if user has permission
      */
-    private function hasPermission(string $permission): bool
+    private function hasPermission(string $permission, $user = null): bool
     {
-        $user = auth()->user();
+        $user = $user ?: auth()->user();
+        
         if (!$user) {
             return false;
         }
 
-        // For now, check if user is ADMIN (TODO: implement full RBAC)
-        return $user->role === 'ADMIN' || (isset($user->permissions) && in_array($permission, $user->permissions));
+        // Check if user is ADMIN - user dapat create auction jika role adalah ADMIN
+        if ($user->role === 'ADMIN') {
+            return true;
+        }
+
+        // Check if permission is in JWT token
+        if (isset($user->permissions) && in_array($permission, $user->permissions)) {
+            return true;
+        }
+        
+        return false;
     }
 }
