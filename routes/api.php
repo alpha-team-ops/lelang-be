@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationSetupController;
 use App\Http\Controllers\Api\V1\StaffController;
+use App\Http\Controllers\Api\V1\RoleController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -44,5 +45,17 @@ Route::prefix('v1')->group(function () {
         Route::put('/{id}', [StaffController::class, 'update']);
         Route::delete('/{id}', [StaffController::class, 'destroy']);
         Route::put('/{id}/activity', [StaffController::class, 'updateActivity']);
+    });
+
+    // Protected Role Routes
+    Route::prefix('roles')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::get('/', [RoleController::class, 'index']);
+        Route::post('/', [RoleController::class, 'store']);
+        Route::get('/permissions/all', [RoleController::class, 'getPermissions']);
+        Route::get('/{id}', [RoleController::class, 'show']);
+        Route::put('/{id}', [RoleController::class, 'update']);
+        Route::delete('/{id}', [RoleController::class, 'destroy']);
+        Route::post('/{id}/assign', [RoleController::class, 'assignRole']);
+        Route::delete('/{id}/unassign', [RoleController::class, 'unassignRole']);
     });
 });
