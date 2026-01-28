@@ -15,7 +15,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 
         // Protected Auth Routes
-        Route::middleware('auth:api')->group(function () {
+        Route::middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
             Route::get('/verify', [AuthController::class, 'verify']);
             Route::post('/logout', [AuthController::class, 'logout']);
             Route::post('/change-password', [AuthController::class, 'changePassword']);
