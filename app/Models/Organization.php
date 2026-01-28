@@ -15,11 +15,31 @@ class Organization extends Model
     protected $fillable = [
         'code',
         'name',
+        'email',
+        'phone',
+        'website',
+        'address',
+        'city',
+        'country',
+        'logo',
         'description',
+        'timezone',
+        'currency',
+        'language',
+        'email_notifications',
+        'auction_notifications',
+        'bid_notifications',
+        'two_factor_auth',
+        'maintenance_mode',
         'status',
     ];
 
     protected $casts = [
+        'email_notifications' => 'boolean',
+        'auction_notifications' => 'boolean',
+        'bid_notifications' => 'boolean',
+        'two_factor_auth' => 'boolean',
+        'maintenance_mode' => 'boolean',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -28,5 +48,10 @@ class Organization extends Model
     public function users(): HasMany
     {
         return $this->hasMany(User::class, 'organization_code', 'code');
+    }
+
+    public function settingsHistory(): HasMany
+    {
+        return $this->hasMany(OrgSettingsHistory::class, 'organization_code', 'code');
     }
 }

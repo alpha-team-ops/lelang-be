@@ -49,6 +49,11 @@ class AuthenticateApiToken
             );
         }
 
+        // Add decoded permissions to user object
+        if (isset($decoded['permissions'])) {
+            $user->permissions = $decoded['permissions'];
+        }
+
         $request->setUserResolver(function () use ($user) {
             return $user;
         });

@@ -112,7 +112,7 @@ class AuthService
     public function getPermissions(string $role): array
     {
         return match ($role) {
-            'ADMIN' => ['manage_users', 'manage_auctions', 'view_analytics'],
+            'ADMIN' => ['manage_users', 'manage_auctions', 'view_analytics', 'manage_settings'],
             'MODERATOR' => ['manage_auctions', 'view_analytics'],
             default => [],
         };

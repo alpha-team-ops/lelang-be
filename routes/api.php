@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\OrganizationController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -20,5 +21,13 @@ Route::prefix('v1')->group(function () {
             Route::post('/logout', [AuthController::class, 'logout']);
             Route::post('/change-password', [AuthController::class, 'changePassword']);
         });
+    });
+
+    // Protected Organization Routes
+    Route::prefix('organization')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::get('/code', [OrganizationController::class, 'getOrganizationCode']);
+        Route::get('/settings', [OrganizationController::class, 'getSettings']);
+        Route::put('/settings', [OrganizationController::class, 'updateSettings']);
+        Route::post('/logo', [OrganizationController::class, 'uploadLogo']);
     });
 });
