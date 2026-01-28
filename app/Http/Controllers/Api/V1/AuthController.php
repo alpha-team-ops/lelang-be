@@ -48,7 +48,7 @@ class AuthController extends Controller
             if (!$user || !$this->authService->verifyPassword($validated['password'], $user->password_hash)) {
                 $this->logAuthAction($validated['email'], 'login', 'failed', $request);
                 return response()->json(
-                    ApiResponse::error('Invalid email or password', 'INVALID_CREDENTIALS', 401),
+                    ApiResponse::error('Invalid email or password'),
                     401
                 );
             }
@@ -68,7 +68,7 @@ class AuthController extends Controller
             );
         } catch (ValidationException $e) {
             return response()->json(
-                ApiResponse::error('Validation failed', 'VALIDATION_ERROR', 422),
+                ApiResponse::error('Validation failed'),
                 422
             );
         }

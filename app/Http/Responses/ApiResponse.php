@@ -15,11 +15,16 @@ class ApiResponse
 
     public static function error(string $error, string $code = null, int $statusCode = 400): array
     {
-        return [
+        $response = [
             'success' => false,
             'error' => $error,
-            'code' => $code,
         ];
+
+        if ($code !== null) {
+            $response['code'] = $code;
+        }
+
+        return $response;
     }
 
     public static function paginated($items, $total, $page, $perPage, string $message = 'Success'): array
