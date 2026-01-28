@@ -30,6 +30,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/settings', [OrganizationController::class, 'getSettings']);
         Route::put('/settings', [OrganizationController::class, 'updateSettings']);
         Route::post('/logo', [OrganizationController::class, 'uploadLogo']);
+        Route::get('/check-setup', [OrganizationSetupController::class, 'checkSetup']);
         Route::post('/create', [OrganizationSetupController::class, 'create']);
         Route::post('/join', [OrganizationSetupController::class, 'join']);
     });

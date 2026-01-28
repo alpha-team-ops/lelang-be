@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Organization;
 use App\Models\User;
 use App\Http\Responses\ApiResponse;
+use App\Services\AuthService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -34,6 +35,15 @@ class OrganizationSetupController
             return DB::transaction(function () use ($validated, $request) {
                 $user = $request->user();
                 $organizationName = trim($validated['organizationName']);
+
+                // Check if user already has an organization
+                if ($user->organization_code !== null) {
+                    return ApiResponse::error(
+                        'You already belong to an organization. Cannot create another organization.',
+                        'USER_ALREADY_IN_ORG',
+                        409
+                    );
+                }
 
                 // Check if organization name already exists
                 if (Organization::where('name', $organizationName)->exists()) {
@@ -75,6 +85,13 @@ class OrganizationSetupController
                     'created_by' => $user->id,
                 ]);
 
+                // Refresh user data to get updated organization_code and role
+                $user->refresh();
+
+                // Generate new tokens with updated organization info
+                $authService = app(AuthService::class);
+                $tokens = $authService->generateTokens($user);
+
                 return ApiResponse::success(
                     [
                         'organizationCode' => $organization->code,
@@ -82,6 +99,10 @@ class OrganizationSetupController
                         'description' => $organization->description,
                         'createdAt' => $organization->created_at?->toIso8601String(),
                         'createdBy' => $user->id,
+                        'accessToken' => $tokens['accessToken'],
+                        'refreshToken' => $tokens['refreshToken'],
+                        'expiresIn' => $tokens['expiresIn'],
+                        'tokenType' => $tokens['tokenType'],
                     ],
                     'Organization created successfully'
                 );
@@ -161,17 +182,55 @@ class OrganizationSetupController
                 // TODO: Send notification to organization admins
                 // $this->notifyAdminsOfNewMember($organization, $user);
 
+                // Refresh user data to get updated organization_code and role
+                $user->refresh();
+
+                // Generate new tokens with updated organization info
+                $authService = app(AuthService::class);
+                $tokens = $authService->generateTokens($user);
+
                 return ApiResponse::success(
                     [
                         'organizationCode' => $organization->code,
                         'name' => $organization->name,
                         'description' => $organization->description,
+                        'accessToken' => $tokens['accessToken'],
+                        'refreshToken' => $tokens['refreshToken'],
+                        'expiresIn' => $tokens['expiresIn'],
+                        'tokenType' => $tokens['tokenType'],
                     ],
                     'Successfully joined organization'
                 );
             });
         } catch (\Exception $e) {
             return ApiResponse::error('Failed to join organization: ' . $e->getMessage(), 'INTERNAL_ERROR', 500);
+        }
+    }
+
+    /**
+     * Check if user needs to complete setup
+     * Used by frontend route guards to determine setup flow
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function checkSetup(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            $needsSetup = $user->organization_code === null;
+
+            return ApiResponse::success(
+                [
+                    'needsSetup' => $needsSetup,
+                    'organizationCode' => $user->organization_code,
+                    'role' => $user->role,
+                ],
+                $needsSetup ? 'User needs to complete organization setup' : 'User has completed organization setup'
+            );
+        } catch (\Exception $e) {
+            return ApiResponse::error('Failed to check setup status: ' . $e->getMessage(), 'INTERNAL_ERROR', 500);
         }
     }
 
