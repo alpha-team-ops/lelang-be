@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationSetupController;
+use App\Http\Controllers\Api\V1\StaffController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -33,5 +34,15 @@ Route::prefix('v1')->group(function () {
         Route::get('/check-setup', [OrganizationSetupController::class, 'checkSetup']);
         Route::post('/create', [OrganizationSetupController::class, 'create']);
         Route::post('/join', [OrganizationSetupController::class, 'join']);
+    });
+
+    // Protected Staff Routes
+    Route::prefix('staff')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::get('/', [StaffController::class, 'index']);
+        Route::post('/', [StaffController::class, 'store']);
+        Route::get('/{id}', [StaffController::class, 'show']);
+        Route::put('/{id}', [StaffController::class, 'update']);
+        Route::delete('/{id}', [StaffController::class, 'destroy']);
+        Route::put('/{id}/activity', [StaffController::class, 'updateActivity']);
     });
 });
