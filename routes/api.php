@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationSetupController;
 use App\Http\Controllers\Api\V1\StaffController;
 use App\Http\Controllers\Api\V1\RoleController;
+use App\Http\Controllers\Api\V1\AuctionController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -57,5 +58,23 @@ Route::prefix('v1')->group(function () {
         Route::delete('/{id}', [RoleController::class, 'destroy']);
         Route::post('/{id}/assign', [RoleController::class, 'assignRole']);
         Route::delete('/{id}/unassign', [RoleController::class, 'unassignRole']);
+    });
+
+    // Protected Auction Routes (Admin)
+    Route::prefix('auctions')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::get('/', [AuctionController::class, 'index']);
+        Route::post('/', [AuctionController::class, 'store']);
+        Route::get('/{id}', [AuctionController::class, 'show']);
+        Route::put('/{id}', [AuctionController::class, 'update']);
+        Route::delete('/{id}', [AuctionController::class, 'destroy']);
+        Route::get('/status/{status}', [AuctionController::class, 'getByStatus']);
+    });
+
+    // Public Auction Routes (Portal)
+    Route::prefix('auctions')->group(function () {
+        Route::get('/portal/list', [AuctionController::class, 'portalList']);
+        Route::get('/portal/{id}', [AuctionController::class, 'portalShow']);
+        Route::get('/search', [AuctionController::class, 'search']);
+        Route::get('/category/{category}', [AuctionController::class, 'getByCategory']);
     });
 });
