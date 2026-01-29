@@ -272,16 +272,16 @@ class AuctionController extends Controller
         $startingPrice = $validated['starting_price'] ?? $auction->starting_price;
         $reservePrice = $validated['reserve_price'] ?? $auction->reserve_price;
 
-        if ((float) $startingPrice >= (float) $reservePrice) {
+        if ((float) $startingPrice > (float) $reservePrice) {
             return response()->json([
                 'success' => false,
                 'message' => 'INVALID_PRICE',
-                'errors' => ['Starting price must be less than reserve price']
+                'errors' => ['Starting price must be less than or equal to reserve price']
             ], 400);
         }
 
-        // Update auction fields
-        $auction->update(array_filter([
+        // Prepare update data
+        $updateData = array_filter([
             'title' => $validated['title'] ?? null,
             'description' => $validated['description'] ?? null,
             'category' => $validated['category'] ?? null,
@@ -292,13 +292,34 @@ class AuctionController extends Controller
             'starting_price' => $validated['starting_price'] ?? null,
             'reserve_price' => $validated['reserve_price'] ?? null,
             'bid_increment' => $validated['bid_increment'] ?? null,
-            'status' => $validated['status'] ?? null,
             'start_time' => $validated['start_time'] ?? null,
             'end_time' => $validated['end_time'] ?? null,
             'image' => $validated['image'] ?? null,
         ], function ($value) {
             return $value !== null;
-        }));
+        });
+
+        // Recalculate status if dates were updated (unless explicit status provided)
+        if (!isset($validated['status']) && (isset($validated['start_time']) || isset($validated['end_time']))) {
+            $startTime = isset($validated['start_time']) ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time'], 'UTC') : $auction->start_time;
+            $endTime = isset($validated['end_time']) ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['end_time'], 'UTC') : $auction->end_time;
+            
+            if (!$startTime || !$endTime) {
+                $updateData['status'] = 'DRAFT';
+            } else {
+                $now = now();
+                if ($now < $startTime) {
+                    $updateData['status'] = 'DRAFT';
+                } elseif ($now <= $endTime) {
+                    $updateData['status'] = 'LIVE';
+                } else {
+                    $updateData['status'] = 'ENDED';
+                }
+            }
+        }
+
+        // Update auction fields
+        $auction->update($updateData);
 
         // Update images if provided
         if (isset($validated['images'])) {
