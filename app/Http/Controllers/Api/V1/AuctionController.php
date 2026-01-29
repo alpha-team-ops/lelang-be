@@ -133,7 +133,7 @@ class AuctionController extends Controller
             'item_location' => 'nullable|string|max:100',
             'purchase_year' => 'nullable|integer|min:1900|max:' . date('Y'),
             'starting_price' => 'required|numeric|min:0',
-            'reserve_price' => 'required|numeric|min:0',
+            'reserve_price' => 'nullable|numeric|min:0',
             'bid_increment' => 'required|numeric|min:0',
             'start_time' => 'required|date_format:Y-m-d H:i:s|after:now',
             'end_time' => 'required|date_format:Y-m-d H:i:s|after:start_time',
@@ -142,21 +142,30 @@ class AuctionController extends Controller
             'images.*' => 'string|url|max:255',
         ], [
             'starting_price.required' => 'Starting price is required',
-            'reserve_price.required' => 'Reserve price is required',
             'bid_increment.required' => 'Bid increment is required',
         ]);
 
-        // Business logic validation
-        if ((float) $validated['starting_price'] >= (float) $validated['reserve_price']) {
-            return response()->json([
-                'success' => false,
-                'message' => 'INVALID_PRICE',
-                'errors' => ['Starting price must be less than reserve price']
-            ], 400);
+        // Default reserve_price to starting_price if not provided
+        if (empty($validated['reserve_price'])) {
+            $validated['reserve_price'] = $validated['starting_price'];
         }
 
         // Create auction
         $auctionId = Str::uuid()->toString();
+        
+        // Calculate initial status based on start_time and end_time
+        $now = now();
+        $startTime = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time']);
+        $endTime = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['end_time']);
+        
+        if ($now < $startTime) {
+            $initialStatus = 'DRAFT';
+        } elseif ($now <= $endTime) {
+            $initialStatus = 'LIVE';
+        } else {
+            $initialStatus = 'ENDED';
+        }
+        
         $auction = Auction::create([
             'id' => $auctionId,
             'organization_code' => $orgCode,
@@ -172,7 +181,7 @@ class AuctionController extends Controller
             'bid_increment' => $validated['bid_increment'],
             'current_bid' => $validated['starting_price'],
             'total_bids' => 0,
-            'status' => 'DRAFT',
+            'status' => $initialStatus,
             'start_time' => $validated['start_time'],
             'end_time' => $validated['end_time'],
             'seller' => auth()->user()?->name ?? 'Admin',

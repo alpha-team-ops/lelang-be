@@ -72,6 +72,33 @@ class Auction extends Model
     }
 
     /**
+     * Calculate auction status based on current datetime
+     * DRAFT: Before start_time
+     * LIVE: Between start_time and end_time
+     * ENDED: After end_time
+     */
+    public function calculateStatus(): string
+    {
+        $now = now();
+        
+        if ($now < $this->start_time) {
+            return 'DRAFT';
+        } elseif ($now <= $this->end_time) {
+            return 'LIVE';
+        } else {
+            return 'ENDED';
+        }
+    }
+
+    /**
+     * Get the current status (calculated from datetime)
+     */
+    public function getCurrentStatus(): string
+    {
+        return $this->calculateStatus();
+    }
+
+    /**
      * Get formatted response for admin view
      */
     public function toAdminArray(): array
@@ -90,7 +117,7 @@ class Auction extends Model
             'bidIncrement' => (float) $this->bid_increment,
             'currentBid' => (float) $this->current_bid,
             'totalBids' => $this->total_bids,
-            'status' => $this->status,
+            'status' => $this->getCurrentStatus(),
             'startTime' => $this->start_time->toIso8601String(),
             'endTime' => $this->end_time->toIso8601String(),
             'seller' => $this->seller,
@@ -118,6 +145,7 @@ class Auction extends Model
             'condition' => $this->condition,
             'currentBid' => (float) $this->current_bid,
             'reservePrice' => (float) $this->reserve_price,
+            'status' => $this->getCurrentStatus(),
             'endTime' => $this->end_time->toIso8601String(),
             'participantCount' => $this->participant_count,
             'images' => $this->images->pluck('image_url')->toArray(),
