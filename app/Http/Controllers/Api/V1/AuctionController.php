@@ -135,8 +135,8 @@ class AuctionController extends Controller
             'starting_price' => 'required|numeric|min:0',
             'reserve_price' => 'nullable|numeric|min:0',
             'bid_increment' => 'required|numeric|min:0',
-            'start_time' => 'required|date_format:Y-m-d H:i:s|after:now',
-            'end_time' => 'required|date_format:Y-m-d H:i:s|after:start_time',
+            'start_time' => 'nullable|date_format:Y-m-d H:i:s|after:now',
+            'end_time' => 'nullable|date_format:Y-m-d H:i:s|after:start_time',
             'image' => 'nullable|string|max:255',
             'images' => 'nullable|array|max:10',
             'images.*' => 'string|url|max:255',
@@ -154,16 +154,20 @@ class AuctionController extends Controller
         $auctionId = Str::uuid()->toString();
         
         // Calculate initial status based on start_time and end_time
-        $now = now();
-        $startTime = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time']);
-        $endTime = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['end_time']);
-        
-        if ($now < $startTime) {
-            $initialStatus = 'DRAFT';
-        } elseif ($now <= $endTime) {
-            $initialStatus = 'LIVE';
-        } else {
-            $initialStatus = 'ENDED';
+        // DRAFT if no dates provided, otherwise based on datetime comparison
+        $initialStatus = 'DRAFT';
+        if (!empty($validated['start_time']) && !empty($validated['end_time'])) {
+            $now = now();
+            $startTime = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time'], 'UTC');
+            $endTime = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['end_time'], 'UTC');
+            
+            if ($now < $startTime) {
+                $initialStatus = 'DRAFT';
+            } elseif ($now <= $endTime) {
+                $initialStatus = 'LIVE';
+            } else {
+                $initialStatus = 'ENDED';
+            }
         }
         
         $auction = Auction::create([

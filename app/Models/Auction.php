@@ -73,12 +73,17 @@ class Auction extends Model
 
     /**
      * Calculate auction status based on current datetime
-     * DRAFT: Before start_time
+     * DRAFT: No dates set OR before start_time
      * LIVE: Between start_time and end_time
      * ENDED: After end_time
      */
     public function calculateStatus(): string
     {
+        // If no start_time or end_time, always DRAFT
+        if (!$this->start_time || !$this->end_time) {
+            return 'DRAFT';
+        }
+        
         $now = now();
         
         if ($now < $this->start_time) {
