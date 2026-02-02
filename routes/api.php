@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\StaffController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\AuctionController;
 use App\Http\Controllers\Api\V1\BidController;
+use App\Http\Controllers\Api\V1\WinnerBidController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -96,5 +97,16 @@ Route::prefix('v1')->group(function () {
     // Protected Bid Routes (Portal User)
     Route::prefix('bids')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
         Route::post('/place', [BidController::class, 'place']);
+    });
+
+    // Winner Bids Routes (Admin)
+    Route::prefix('bids/winners')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::get('/', [WinnerBidController::class, 'index'])->middleware('permission:manage_auctions');
+        Route::post('/', [WinnerBidController::class, 'create'])->middleware('permission:manage_auctions');
+        Route::get('/overdue-payments', [WinnerBidController::class, 'overduePayments'])->middleware('permission:manage_auctions');
+        Route::get('/status/{status}', [WinnerBidController::class, 'byStatus'])->middleware('permission:manage_auctions');
+        Route::get('/{id}', [WinnerBidController::class, 'show'])->middleware('permission:manage_auctions');
+        Route::get('/{id}/history', [WinnerBidController::class, 'statusHistory'])->middleware('permission:manage_auctions');
+        Route::put('/{id}/status', [WinnerBidController::class, 'updateStatus'])->middleware('permission:manage_auctions');
     });
 });
