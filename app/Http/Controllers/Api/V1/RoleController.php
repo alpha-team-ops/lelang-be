@@ -9,6 +9,7 @@ use App\Models\Staff;
 use App\Models\RoleAuditLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 class RoleController extends Controller
 {
@@ -155,6 +156,7 @@ class RoleController extends Controller
                 'success' => false,
                 'error' => 'A role with this name already exists in your organization',
                 'code' => 'DUPLICATE_ROLE',
+                'message' => 'Failed to create role',
             ], 409);
         }
 
@@ -178,7 +180,8 @@ class RoleController extends Controller
                     'permission_id' => $permissionId,
                 ];
             }
-            $role->permissions()->attach($validated['permissions']);
+            // Insert with IDs directly to database
+            DB::table('role_permissions')->insert($permissions);
         }
 
         // Log audit
@@ -191,6 +194,7 @@ class RoleController extends Controller
         return response()->json([
             'success' => true,
             'data' => $this->formatRole($role->refresh()),
+            'message' => 'Role created successfully',
         ], 201);
     }
 

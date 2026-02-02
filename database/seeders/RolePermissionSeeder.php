@@ -39,6 +39,9 @@ class RolePermissionSeeder extends Seeder
 
             // Analytics Permissions
             ['name' => 'view_analytics', 'description' => 'View statistics and analytics', 'resource' => 'analytics', 'action' => 'read'],
+
+            // Overview Permissions
+            ['name' => 'view_overview', 'description' => 'View dashboard overview', 'resource' => 'overview', 'action' => 'read'],
         ];
 
         // Get or create permissions
@@ -60,8 +63,8 @@ class RolePermissionSeeder extends Seeder
         $this->command->info('Permissions created successfully.');
 
         // Create built-in roles for each organization
-        // For now, we'll create them for ORG-ALPHACORP-001
-        $orgCode = 'ORG-ALPHACORP-001';
+        // For now, we'll create them for ORG-DERALY-001
+        $orgCode = 'ORG-DERALY-001';
 
         // Admin Role
         $adminRole = Role::where('organization_code', $orgCode)
@@ -151,12 +154,46 @@ class RolePermissionSeeder extends Seeder
             $this->command->info('Analyst role created for ' . $orgCode);
         }
 
+        // Member Role
+        $memberRole = Role::where('organization_code', $orgCode)
+                         ->where('name', 'Member')
+                         ->first();
+
+        if (!$memberRole) {
+            $memberRole = Role::create([
+                'id' => Str::uuid()->toString(),
+                'organization_code' => $orgCode,
+                'name' => 'Member',
+                'description' => 'Basic member access with overview and analytics view',
+                'is_active' => true,
+            ]);
+
+            // Attach limited permissions to Member role
+            $memberPerms = [
+                'view_overview',
+                'view_analytics',
+            ];
+            $memberPermIds = array_intersect_key($permissionMap, array_flip($memberPerms));
+            foreach (array_values($memberPermIds) as $permissionId) {
+                DB::table('role_permissions')->insert([
+                    'id' => Str::uuid()->toString(),
+                    'role_id' => $memberRole->id,
+                    'permission_id' => $permissionId,
+                ]);
+            }
+            $this->command->info('Member role created for ' . $orgCode);
+        }
+
         // Assign Admin role to alpha.dev user
-        $alphaUser = \App\Models\User::where('email', 'alpha.dev@localhost')->first();
+        $alphaUser = \App\Models\User::where('email', 'alpha.dev@deraly.id')->first();
         if ($alphaUser) {
-            $adminAssignment = $alphaUser->roles()
-                                        ->where('role_id', $adminRole->id)
-                                        ->first();
+            // Check if already assigned
+            $adminAssignment = DB::table('staff_roles')
+                                ->where('staff_id', $alphaUser->id)
+                                ->where('role_id', $adminRole->id)
+                                ->where('organization_code', $orgCode)
+                                ->first();
+            
             if (!$adminAssignment) {
                 DB::table('staff_roles')->insert([
                     'id' => Str::uuid()->toString(),

@@ -68,6 +68,8 @@ class OrganizationController extends Controller
                 'bidNotifications' => $organization->bid_notifications,
                 'twoFactorAuth' => $organization->two_factor_auth,
                 'maintenanceMode' => $organization->maintenance_mode,
+                'portalInvitationCode' => $organization->portal_invitation_code,
+                'portalInvitationActive' => $organization->portal_invitation_active,
             ];
 
             return response()->json(
@@ -185,6 +187,8 @@ class OrganizationController extends Controller
                 'bidNotifications' => $organization->bid_notifications,
                 'twoFactorAuth' => $organization->two_factor_auth,
                 'maintenanceMode' => $organization->maintenance_mode,
+                'portalInvitationCode' => $organization->portal_invitation_code,
+                'portalInvitationActive' => $organization->portal_invitation_active,
             ];
 
             return response()->json(
@@ -280,16 +284,27 @@ class OrganizationController extends Controller
     }
 
     /**
-     * Get Organization Code
+     * Get Organization Code & Portal Invitation Code
      * GET /api/v1/organization/code
      */
     public function getOrganizationCode(Request $request)
     {
         try {
+            $organization = Organization::where('code', $request->user()->organization_code)->first();
+
+            if (!$organization) {
+                return response()->json(
+                    ApiResponse::error('Organization not found'),
+                    404
+                );
+            }
+
             return response()->json(
                 ApiResponse::success([
-                    'organizationCode' => $request->user()->organization_code,
-                ], 'Organization code retrieved successfully'),
+                    'organizationCode' => $organization->code,
+                    'portalInvitationCode' => $organization->portal_invitation_code,
+                    'portalInvitationActive' => $organization->portal_invitation_active,
+                ], 'Organization codes retrieved successfully'),
                 200
             );
         } catch (\Exception $e) {

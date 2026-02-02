@@ -53,7 +53,7 @@ class AuthService
             'name' => $user->name,
             'role' => $user->role,
             'organizationCode' => $user->organization_code,
-            'permissions' => $this->getPermissions($user->role),
+            'permissions' => $this->getPermissions($user),
             'iat' => $issuedAt,
             'exp' => $expire,
         ];
@@ -107,15 +107,36 @@ class AuthService
     }
 
     /**
-     * Get permissions based on role
+     * Get permissions for user from database (staff_roles and role_permissions)
      */
-    public function getPermissions(string $role): array
+    public function getPermissions(User $user): array
     {
-        return match ($role) {
-            'ADMIN' => ['manage_users', 'manage_auctions', 'view_analytics', 'manage_settings'],
-            'MODERATOR' => ['manage_auctions', 'view_analytics'],
-            default => [],
-        };
+        if (!$user->organization_code) {
+            return [];
+        }
+
+        // Get user's roles from staff_roles table for current organization
+        $roleIds = \Illuminate\Support\Facades\DB::table('staff_roles')
+            ->where('staff_id', $user->id)
+            ->where('organization_code', $user->organization_code)
+            ->pluck('role_id')
+            ->toArray();
+
+        if (empty($roleIds)) {
+            return [];
+        }
+
+        // Get all permissions for user's roles from role_permissions table
+        $permissions = \Illuminate\Support\Facades\DB::table('role_permissions')
+            ->whereIn('role_id', $roleIds)
+            ->join('permissions', 'role_permissions.permission_id', '=', 'permissions.id')
+            ->pluck('permissions.name')
+            ->unique()
+            ->sort()
+            ->values()
+            ->toArray();
+
+        return $permissions;
     }
 
     /**
@@ -240,6 +261,28 @@ class AuthService
         }
 
         return $payload;
+    }
+
+    /**
+     * Generate portal token for portal users (1 hour expiry)
+     */
+    public function generatePortalToken(User $user): string
+    {
+        $issuedAt = now()->timestamp;
+        $expire = now()->addSeconds(3600)->timestamp; // 1 hour
+
+        $payload = [
+            'userId' => $user->id,
+            'name' => $user->name,
+            'corporateIdNip' => $user->corporate_id_nip,
+            'directorate' => $user->directorate,
+            'organizationCode' => $user->organization_code,
+            'userType' => 'PORTAL',
+            'iat' => $issuedAt,
+            'exp' => $expire,
+        ];
+
+        return $this->encodeJWT($payload);
     }
 
     /**

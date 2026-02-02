@@ -54,6 +54,9 @@ class AuctionController extends Controller
         $total = $query->count();
         $auctions = $query->offset($offset)->limit($limit)->get();
 
+        // Recalculate status for all auctions based on current time
+        $auctions->each(fn ($auction) => $this->recalculateStatus($auction));
+
         return response()->json([
             'success' => true,
             'data' => $auctions->map(fn ($auction) => $auction->toAdminArray()),
@@ -70,9 +73,9 @@ class AuctionController extends Controller
      * Get specific auction by ID
      * GET /api/v1/auctions/:id
      */
-    public function show(string $id): JsonResponse
+    public function show(string $id, Request $request): JsonResponse
     {
-        $orgCode = auth()->user()?->organization_code;
+        $orgCode = $request->user()?->organization_code;
         if (!$orgCode) {
             return response()->json([
                 'success' => false,
@@ -91,6 +94,12 @@ class AuctionController extends Controller
                 'data' => null
             ], 404);
         }
+
+        // Recalculate status based on current time
+        $this->recalculateStatus($auction);
+        
+        // Refresh to get latest status
+        $auction->refresh();
 
         return response()->json([
             'success' => true,
@@ -186,8 +195,8 @@ class AuctionController extends Controller
             'current_bid' => $validated['starting_price'],
             'total_bids' => 0,
             'status' => $initialStatus,
-            'start_time' => $validated['start_time'],
-            'end_time' => $validated['end_time'],
+            'start_time' => $validated['start_time'] ?? null,
+            'end_time' => $validated['end_time'] ?? null,
             'seller' => auth()->user()?->name ?? 'Admin',
             'view_count' => 0,
             'participant_count' => 0,
@@ -240,8 +249,18 @@ class AuctionController extends Controller
             ], 404);
         }
 
-        // Cannot update LIVE or ENDED auctions (except status)
-        if (in_array($auction->status, ['LIVE', 'ENDED']) && !$request->has('status')) {
+        // Cannot update LIVE or ENDED auctions (except status and dates that affect status)
+        $allowedFieldsForLive = ['status', 'start_time', 'end_time'];
+        $hasOnlyAllowedFields = true;
+        
+        foreach ($request->all() as $key => $value) {
+            if (!in_array($key, $allowedFieldsForLive)) {
+                $hasOnlyAllowedFields = false;
+                break;
+            }
+        }
+        
+        if (in_array($auction->status, ['LIVE', 'ENDED']) && !$hasOnlyAllowedFields) {
             return response()->json([
                 'success' => false,
                 'message' => 'CANNOT_UPDATE_LIVE'
@@ -299,8 +318,9 @@ class AuctionController extends Controller
             return $value !== null;
         });
 
-        // Recalculate status if dates were updated (unless explicit status provided)
-        if (!isset($validated['status']) && (isset($validated['start_time']) || isset($validated['end_time']))) {
+        // Recalculate status based on current datetime if dates exist
+        // This ensures auction status is always accurate even after time has passed
+        if (!isset($validated['status'])) {
             $startTime = isset($validated['start_time']) ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time'], 'UTC') : $auction->start_time;
             $endTime = isset($validated['end_time']) ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['end_time'], 'UTC') : $auction->end_time;
             
@@ -394,7 +414,10 @@ class AuctionController extends Controller
      */
     public function portalList(Request $request): JsonResponse
     {
-        $orgCode = $request->get('organization_code', auth()->user()?->organization_code);
+        // Get authenticated user from request (set by middleware)
+        $user = $request->user() ?? $request->attributes->get('user');
+        $orgCode = $user?->organization_code ?? $request->get('organization_code');
+        
         if (!$orgCode) {
             return response()->json([
                 'success' => false,
@@ -402,8 +425,11 @@ class AuctionController extends Controller
             ], 400);
         }
 
+        // Filter: only auctions that are currently LIVE (start_time <= now <= end_time)
+        $now = now();
         $query = Auction::where('organization_code', $orgCode)
-            ->where('status', 'LIVE');
+            ->where('start_time', '<=', $now)
+            ->where('end_time', '>=', $now);
 
         // Apply filters
         if ($request->has('category')) {
@@ -444,8 +470,10 @@ class AuctionController extends Controller
      */
     public function portalShow(string $id): JsonResponse
     {
+        $now = now();
         $auction = Auction::where('id', $id)
-            ->where('status', 'LIVE')
+            ->where('start_time', '<=', $now)
+            ->where('end_time', '>=', $now)
             ->first();
 
         if (!$auction) {
@@ -478,8 +506,11 @@ class AuctionController extends Controller
             ], 400);
         }
 
+        // Filter: only auctions that are currently LIVE
+        $now = now();
         $query = Auction::where('organization_code', $orgCode)
-            ->where('status', 'LIVE');
+            ->where('start_time', '<=', $now)
+            ->where('end_time', '>=', $now);
 
         // Search by query (title, description)
         if ($request->has('query') && !empty($request->get('query'))) {
@@ -529,9 +560,12 @@ class AuctionController extends Controller
             ], 400);
         }
 
+        // Filter: only auctions that are currently LIVE
+        $now = now();
         $query = Auction::where('organization_code', $orgCode)
             ->where('category', $category)
-            ->where('status', 'LIVE');
+            ->where('start_time', '<=', $now)
+            ->where('end_time', '>=', $now);
 
         // Pagination
         $page = (int) $request->get('page', 1);
@@ -606,6 +640,37 @@ class AuctionController extends Controller
     /**
      * Check if user has permission
      */
+    /**
+     * Recalculate auction status based on current datetime
+     * This ensures the status is always accurate even after time has passed
+     */
+    private function recalculateStatus(Auction $auction): void
+    {
+        // If no start_time or end_time, keep as DRAFT
+        if (!$auction->start_time || !$auction->end_time) {
+            if ($auction->status !== 'DRAFT') {
+                $auction->update(['status' => 'DRAFT']);
+            }
+            return;
+        }
+
+        $now = now();
+        $newStatus = null;
+
+        if ($now < $auction->start_time) {
+            $newStatus = 'DRAFT';
+        } elseif ($now <= $auction->end_time) {
+            $newStatus = 'LIVE';
+        } else {
+            $newStatus = 'ENDED';
+        }
+
+        // Update if status has changed
+        if ($newStatus && $auction->status !== $newStatus) {
+            $auction->update(['status' => $newStatus]);
+        }
+    }
+
     private function hasPermission(string $permission, $user = null): bool
     {
         $user = $user ?: auth()->user();
@@ -625,5 +690,32 @@ class AuctionController extends Controller
         }
         
         return false;
+    }
+
+    /**
+     * Record view on auction
+     * POST /api/v1/auctions/:id/view
+     */
+    public function recordView(string $id): JsonResponse
+    {
+        $auction = Auction::find($id);
+
+        if (!$auction) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Auction not found',
+                'code' => 'AUCTION_NOT_FOUND'
+            ], 404);
+        }
+
+        $auction->increment('view_count');
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'auctionId' => $auction->id,
+                'viewCount' => $auction->view_count
+            ]
+        ]);
     }
 }

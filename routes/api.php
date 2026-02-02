@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\OrganizationSetupController;
 use App\Http\Controllers\Api\V1\StaffController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\AuctionController;
+use App\Http\Controllers\Api\V1\BidController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -15,6 +16,7 @@ Route::prefix('v1')->group(function () {
     Route::prefix('auth')->group(function () {
         Route::post('/login', [AuthController::class, 'login']);
         Route::post('/register', [AuthController::class, 'register']);
+        Route::post('/portal-login', [AuthController::class, 'portalLogin']);
         Route::post('/refresh', [AuthController::class, 'refresh']);
         Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
         Route::post('/reset-password', [AuthController::class, 'resetPassword']);
@@ -22,8 +24,10 @@ Route::prefix('v1')->group(function () {
         // Protected Auth Routes
         Route::middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
             Route::get('/verify', [AuthController::class, 'verify']);
+            Route::get('/me', [AuthController::class, 'me']);
             Route::post('/logout', [AuthController::class, 'logout']);
             Route::post('/change-password', [AuthController::class, 'changePassword']);
+            Route::post('/check-permission', [AuthController::class, 'checkPermission']);
         });
     });
 
@@ -41,27 +45,27 @@ Route::prefix('v1')->group(function () {
     // Protected Staff Routes
     Route::prefix('staff')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
         Route::get('/', [StaffController::class, 'index']);
-        Route::post('/', [StaffController::class, 'store']);
+        Route::post('/', [StaffController::class, 'store'])->middleware('permission:manage_staff');
         Route::get('/{id}', [StaffController::class, 'show']);
-        Route::put('/{id}', [StaffController::class, 'update']);
-        Route::delete('/{id}', [StaffController::class, 'destroy']);
+        Route::put('/{id}', [StaffController::class, 'update'])->middleware('permission:manage_staff');
+        Route::delete('/{id}', [StaffController::class, 'destroy'])->middleware('permission:manage_staff');
         Route::put('/{id}/activity', [StaffController::class, 'updateActivity']);
     });
 
     // Protected Role Routes
     Route::prefix('roles')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
         Route::get('/', [RoleController::class, 'index']);
-        Route::post('/', [RoleController::class, 'store']);
+        Route::post('/', [RoleController::class, 'store'])->middleware('permission:manage_roles');
         Route::get('/permissions/all', [RoleController::class, 'getPermissions']);
+        Route::post('/{id}/assign', [RoleController::class, 'assignRole'])->middleware('permission:manage_roles');
+        Route::delete('/{id}/unassign', [RoleController::class, 'unassignRole'])->middleware('permission:manage_roles');
         Route::get('/{id}', [RoleController::class, 'show']);
-        Route::put('/{id}', [RoleController::class, 'update']);
-        Route::delete('/{id}', [RoleController::class, 'destroy']);
-        Route::post('/{id}/assign', [RoleController::class, 'assignRole']);
-        Route::delete('/{id}/unassign', [RoleController::class, 'unassignRole']);
+        Route::put('/{id}', [RoleController::class, 'update'])->middleware('permission:manage_roles');
+        Route::delete('/{id}', [RoleController::class, 'destroy'])->middleware('permission:manage_roles');
     });
 
-    // Public Auction Routes (Portal) - MUST BE BEFORE PROTECTED ROUTES
-    Route::prefix('auctions/portal')->group(function () {
+    // Public Auction Routes (Portal) - WITH AUTHENTICATION
+    Route::prefix('auctions/portal')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
         Route::get('/list', [AuctionController::class, 'portalList']);
         Route::get('/{id}', [AuctionController::class, 'portalShow']);
     });
@@ -69,15 +73,28 @@ Route::prefix('v1')->group(function () {
     Route::prefix('auctions')->group(function () {
         Route::get('/search', [AuctionController::class, 'search']);
         Route::get('/category/{category}', [AuctionController::class, 'getByCategory']);
+        Route::post('/{id}/view', [AuctionController::class, 'recordView']);
+    });
+
+    // Public Bid Routes (Portal - Activity and History don't need auth)
+    Route::prefix('bids')->group(function () {
+        Route::get('/activity', [BidController::class, 'activity']);
+        Route::get('/auction/{auctionId}', [BidController::class, 'getAuctionBids']);
+        Route::get('/user/{userId}', [BidController::class, 'userHistory']);
     });
 
     // Protected Auction Routes (Admin)
     Route::prefix('auctions')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
         Route::get('/', [AuctionController::class, 'index']);
-        Route::post('/', [AuctionController::class, 'store']);
+        Route::post('/', [AuctionController::class, 'store'])->middleware('permission:manage_auctions');
         Route::get('/{id}', [AuctionController::class, 'show']);
-        Route::put('/{id}', [AuctionController::class, 'update']);
-        Route::delete('/{id}', [AuctionController::class, 'destroy']);
+        Route::put('/{id}', [AuctionController::class, 'update'])->middleware('permission:manage_auctions');
+        Route::delete('/{id}', [AuctionController::class, 'destroy'])->middleware('permission:manage_auctions');
         Route::get('/status/{status}', [AuctionController::class, 'getByStatus']);
+    });
+
+    // Protected Bid Routes (Portal User)
+    Route::prefix('bids')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::post('/place', [BidController::class, 'place']);
     });
 });

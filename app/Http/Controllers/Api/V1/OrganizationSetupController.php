@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Models\Role;
 use App\Http\Responses\ApiResponse;
 use App\Services\AuthService;
+use App\Services\RoleService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -67,7 +69,13 @@ class OrganizationSetupController
                     'two_factor_auth' => false,
                     'maintenance_mode' => false,
                     'status' => 'active',
+                    'portal_invitation_code' => $this->generatePortalInvitationCode(),
+                    'portal_invitation_active' => true,
                 ]);
+
+                // Create default roles for the organization (Admin and Member)
+                $roleService = app(RoleService::class);
+                $roleService->createDefaultRoles($organizationCode);
 
                 // Update user to be ADMIN of this organization
                 DB::table('users')
@@ -97,6 +105,7 @@ class OrganizationSetupController
                         'organizationCode' => $organization->code,
                         'name' => $organization->name,
                         'description' => $organization->description,
+                        'portalInvitationCode' => $organization->portal_invitation_code,
                         'createdAt' => $organization->created_at?->toIso8601String(),
                         'createdBy' => $user->id,
                         'accessToken' => $tokens['accessToken'],
@@ -171,6 +180,22 @@ class OrganizationSetupController
                         'role' => 'MEMBER',
                         'updated_at' => now(),
                     ]);
+
+                // Assign Member role to the user
+                $memberRole = Role::where('organization_code', $organizationCode)
+                                  ->where('name', 'Member')
+                                  ->first();
+
+                if ($memberRole) {
+                    DB::table('staff_roles')->insert([
+                        'id' => Str::uuid()->toString(),
+                        'staff_id' => $user->id,
+                        'role_id' => $memberRole->id,
+                        'organization_code' => $organizationCode,
+                        'assigned_by' => null, // System assignment
+                        'assigned_at' => now(),
+                    ]);
+                }
 
                 // Log audit action
                 $this->logAuditAction($user->id, 'join_organization', 'organization', $organizationCode, null, [
@@ -260,6 +285,22 @@ class OrganizationSetupController
         }
 
         return "ORG-{$namePrefix}-" . str_pad($sequence, 3, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Generate unique portal invitation code
+     * Format: PORTAL-{8 RANDOM CHARS}
+     * Example: PORTAL-A7K3M9L2
+     * 
+     * @return string
+     */
+    private function generatePortalInvitationCode(): string
+    {
+        do {
+            $code = 'PORTAL-' . strtoupper(Str::random(8));
+        } while (Organization::where('portal_invitation_code', $code)->exists());
+
+        return $code;
     }
 
     /**

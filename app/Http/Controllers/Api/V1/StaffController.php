@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Staff;
+use App\Models\Role;
 use App\Http\Responses\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -155,7 +156,7 @@ class StaffController
             'name' => 'required|string|max:100',
             'email' => 'required|email|max:100',
             'password' => 'required|min:8|regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[a-zA-Z\d@$!%*?&]{8,}$/',
-            'role' => 'required|in:ADMIN,MODERATOR',
+            'roleId' => 'required|uuid|exists:roles,id',
         ], [
             'name.required' => 'Name is required',
             'email.required' => 'Email is required',
@@ -163,8 +164,9 @@ class StaffController
             'password.required' => 'Password is required',
             'password.min' => 'Password must be at least 8 characters',
             'password.regex' => 'Password must contain uppercase, lowercase, number, and special character',
-            'role.required' => 'Role is required',
-            'role.in' => 'Role must be ADMIN or MODERATOR',
+            'roleId.required' => 'Role ID is required',
+            'roleId.uuid' => 'Role ID must be a valid UUID',
+            'roleId.exists' => 'Selected role does not exist',
         ]);
 
         try {
@@ -178,10 +180,22 @@ class StaffController
                 );
             }
 
-            if (!$this->hasPermission($user, 'manage_users')) {
+            if (!$this->hasPermission($user, 'manage_staff')) {
                 return response()->json(
                     ApiResponse::error('Insufficient permissions', 'PERMISSION_DENIED', 403),
                     403
+                );
+            }
+
+            // Verify role belongs to user's organization
+            $role = Role::where('id', $validated['roleId'])
+                        ->where('organization_code', $organizationCode)
+                        ->first();
+
+            if (!$role) {
+                return response()->json(
+                    ApiResponse::error('Role not found in your organization', 'ROLE_NOT_FOUND', 404),
+                    404
                 );
             }
 
@@ -197,16 +211,25 @@ class StaffController
                 );
             }
 
-            // Create staff
+            // Create staff without direct role assignment
             $staff = Staff::create([
                 'id' => Str::uuid(),
                 'name' => $validated['name'],
                 'email' => $validated['email'],
                 'password_hash' => Hash::make($validated['password']),
-                'role' => $validated['role'],
                 'status' => 'ACTIVE',
                 'organization_code' => $organizationCode,
                 'email_verified' => false,
+            ]);
+
+            // Assign role via staff_roles junction table
+            DB::table('staff_roles')->insert([
+                'id' => Str::uuid(),
+                'staff_id' => $staff->id,
+                'role_id' => $role->id,
+                'organization_code' => $organizationCode,
+                'assigned_by' => $user->id,
+                'assigned_at' => now(),
             ]);
 
             // Log action
@@ -219,7 +242,8 @@ class StaffController
                 [
                     'name' => $staff->name,
                     'email' => $staff->email,
-                    'role' => $staff->role,
+                    'role_id' => $role->id,
+                    'role_name' => $role->name,
                 ]
             );
 
@@ -248,12 +272,13 @@ class StaffController
         $validated = $request->validate([
             'name' => 'sometimes|string|max:100',
             'status' => 'sometimes|in:ACTIVE,INACTIVE',
-            'role' => 'sometimes|in:ADMIN,MODERATOR',
+            'roleId' => 'sometimes|uuid|exists:roles,id',
         ], [
             'name.string' => 'Name must be a string',
             'name.max' => 'Name cannot exceed 100 characters',
             'status.in' => 'Status must be ACTIVE or INACTIVE',
-            'role.in' => 'Role must be ADMIN or MODERATOR',
+            'roleId.uuid' => 'Role ID must be a valid UUID',
+            'roleId.exists' => 'Selected role does not exist',
         ]);
 
         try {
@@ -267,7 +292,7 @@ class StaffController
                 );
             }
 
-            if (!$this->hasPermission($user, 'manage_users')) {
+            if (!$this->hasPermission($user, 'manage_staff')) {
                 return response()->json(
                     ApiResponse::error('Insufficient permissions', 'PERMISSION_DENIED', 403),
                     403
@@ -293,7 +318,7 @@ class StaffController
                         409
                     );
                 }
-                if (isset($validated['role'])) {
+                if (isset($validated['roleId'])) {
                     return response()->json(
                         ApiResponse::error('Cannot change own role', 'CANNOT_CHANGE_OWN_ROLE', 409),
                         409
@@ -305,11 +330,65 @@ class StaffController
             $oldValues = [
                 'name' => $staff->name,
                 'status' => $staff->status,
-                'role' => $staff->role,
             ];
 
-            // Update staff
-            $staff->update($validated);
+            // Update staff basic fields (excluding role)
+            $updateData = [];
+            if (isset($validated['name'])) {
+                $updateData['name'] = $validated['name'];
+            }
+            if (isset($validated['status'])) {
+                $updateData['status'] = $validated['status'];
+            }
+
+            if (!empty($updateData)) {
+                $staff->update($updateData);
+            }
+
+            // Handle role change via staff_roles junction table
+            if (isset($validated['roleId'])) {
+                // Verify role belongs to organization
+                $role = Role::where('id', $validated['roleId'])
+                            ->where('organization_code', $organizationCode)
+                            ->first();
+
+                if (!$role) {
+                    return response()->json(
+                        ApiResponse::error('Role not found in your organization', 'ROLE_NOT_FOUND', 404),
+                        404
+                    );
+                }
+
+                // Get current role assignment
+                $currentRole = DB::table('staff_roles')
+                    ->where('staff_id', $staff->id)
+                    ->where('organization_code', $organizationCode)
+                    ->first();
+
+                if ($currentRole) {
+                    // Update existing role assignment
+                    DB::table('staff_roles')
+                        ->where('staff_id', $staff->id)
+                        ->where('organization_code', $organizationCode)
+                        ->update([
+                            'role_id' => $validated['roleId'],
+                            'assigned_at' => now(),
+                        ]);
+                    $oldValues['role_id'] = $currentRole->role_id;
+                } else {
+                    // Create new role assignment if none exists
+                    DB::table('staff_roles')->insert([
+                        'id' => Str::uuid(),
+                        'staff_id' => $staff->id,
+                        'role_id' => $validated['roleId'],
+                        'organization_code' => $organizationCode,
+                        'assigned_by' => $user->id,
+                        'assigned_at' => now(),
+                    ]);
+                }
+
+                $updateData['roleId'] = $validated['roleId'];
+            }
 
             // Log action
             $this->logAuditAction(
@@ -318,7 +397,7 @@ class StaffController
                 'staff',
                 $staff->id,
                 $oldValues,
-                array_intersect_key($validated, $oldValues)
+                $updateData
             );
 
             return response()->json(

@@ -72,6 +72,30 @@ class Auction extends Model
     }
 
     /**
+     * Get all bids for this auction
+     */
+    public function bids(): HasMany
+    {
+        return $this->hasMany(Bid::class, 'auction_id')->orderBy('bid_timestamp', 'desc');
+    }
+
+    /**
+     * Get the current bidder (user with highest bid)
+     */
+    public function currentBidderUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'current_bidder', 'id');
+    }
+
+    /**
+     * Get the current highest bid
+     */
+    public function currentHighestBid()
+    {
+        return $this->bids()->where('status', '!=', 'OUTBID')->first();
+    }
+
+    /**
      * Calculate auction status based on current datetime
      * DRAFT: No dates set OR before start_time
      * LIVE: Between start_time and end_time
@@ -93,6 +117,26 @@ class Auction extends Model
         } else {
             return 'ENDED';
         }
+    }
+
+    /**
+     * Get bidder name safely (handles invalid UUID in current_bidder field)
+     */
+    public function getBidderName(): ?string
+    {
+        // If no current_bidder, return null
+        if (!$this->current_bidder) {
+            return null;
+        }
+        
+        // Check if current_bidder is valid UUID format (8-4-4-4-12)
+        if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $this->current_bidder)) {
+            // If not UUID, return as-is (fallback to display the value)
+            return $this->current_bidder;
+        }
+        
+        // If valid UUID, try to get user name
+        return $this->currentBidderUser?->name ?? null;
     }
 
     /**
@@ -126,7 +170,7 @@ class Auction extends Model
             'startTime' => $this->start_time?->toIso8601String(),
             'endTime' => $this->end_time?->toIso8601String(),
             'seller' => $this->seller,
-            'currentBidder' => $this->current_bidder,
+            'currentBidder' => $this->getBidderName(),
             'image' => $this->image,
             'images' => $this->images->pluck('image_url')->toArray(),
             'viewCount' => $this->view_count,
@@ -150,11 +194,14 @@ class Auction extends Model
             'condition' => $this->condition,
             'currentBid' => (float) $this->current_bid,
             'reservePrice' => (float) $this->reserve_price,
+            'bidIncrement' => (float) $this->bid_increment,
             'status' => $this->getCurrentStatus(),
             'endTime' => $this->end_time?->toIso8601String(),
             'participantCount' => $this->participant_count,
+            'viewCount' => $this->view_count,
+            'totalBids' => $this->total_bids,
+            'currentBidder' => $this->getBidderName(),
             'images' => $this->images->pluck('image_url')->toArray(),
-            'organizationCode' => $this->organization_code,
         ];
     }
 }

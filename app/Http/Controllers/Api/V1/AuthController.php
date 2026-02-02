@@ -305,9 +305,115 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'role' => $user->role,
                     'organizationCode' => $user->organization_code,
-                    'permissions' => $this->authService->getPermissions($user->role),
+                    'permissions' => $this->authService->getPermissions($user),
                 ],
             ], 'Token is valid'),
+            200
+        );
+    }
+
+    /**
+     * Get Current User with Permissions
+     * GET /api/v1/auth/me
+     */
+    public function me(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json(
+                ApiResponse::error('User not found', 'USER_NOT_FOUND', 401),
+                401
+            );
+        }
+
+        // Get user's roles and permissions
+        $staffRoles = DB::table('staff_roles')
+            ->where('staff_id', $user->id)
+            ->where('organization_code', $user->organization_code)
+            ->get();
+
+        $permissions = [];
+        foreach ($staffRoles as $staffRole) {
+            $rolePerms = DB::table('role_permissions')
+                ->join('permissions', 'role_permissions.permission_id', '=', 'permissions.id')
+                ->where('role_permissions.role_id', $staffRole->role_id)
+                ->select('permissions.name', 'permissions.resource', 'permissions.action')
+                ->distinct()
+                ->get();
+            
+            foreach ($rolePerms as $perm) {
+                $permissions[] = $perm->name;
+            }
+        }
+
+        // Remove duplicates
+        $permissions = array_values(array_unique($permissions));
+
+        $roles = [];
+        foreach ($staffRoles as $sr) {
+            $role = DB::table('roles')->where('id', $sr->role_id)->first();
+            if ($role) {
+                $roles[] = [
+                    'roleId' => $sr->role_id,
+                    'roleName' => $role->name,
+                    'organizationCode' => $sr->organization_code,
+                    'assignedAt' => $sr->assigned_at,
+                ];
+            }
+        }
+
+        return response()->json(
+            ApiResponse::success([
+                'userId' => $user->id,
+                'email' => $user->email,
+                'name' => $user->name,
+                'organizationCode' => $user->organization_code,
+                'role' => $user->role,
+                'roles' => $roles,
+                'permissions' => $permissions,
+            ], 'Current user data retrieved'),
+            200
+        );
+    }
+
+    /**
+     * Check if User has Specific Permission
+     * POST /api/v1/auth/check-permission
+     */
+    public function checkPermission(Request $request)
+    {
+        $validated = $request->validate([
+            'permission' => 'required|string',
+        ]);
+
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json(
+                ApiResponse::error('User not found', 'USER_NOT_FOUND', 401),
+                401
+            );
+        }
+
+        // Get user's roles for current organization
+        $staffRoles = DB::table('staff_roles')
+            ->where('staff_id', $user->id)
+            ->where('organization_code', $user->organization_code)
+            ->pluck('role_id');
+
+        // Check if user has this permission through any of their roles
+        $hasPermission = DB::table('role_permissions')
+            ->join('permissions', 'role_permissions.permission_id', '=', 'permissions.id')
+            ->whereIn('role_permissions.role_id', $staffRoles)
+            ->where('permissions.name', $validated['permission'])
+            ->exists();
+
+        return response()->json(
+            ApiResponse::success([
+                'permission' => $validated['permission'],
+                'hasPermission' => $hasPermission,
+            ], $hasPermission ? 'User has this permission' : 'User does not have this permission'),
             200
         );
     }
@@ -510,6 +616,109 @@ class AuthController extends Controller
                 ApiResponse::error('Validation failed', 'VALIDATION_ERROR', 422),
                 422
             );
+        }
+    }
+
+    /**
+     * Portal User Login (First-Time Access)
+     * POST /api/v1/auth/portal-login
+     * 
+     * Auto-creates portal user if doesn't exist (based on corporateIdNip)
+     * Or loads existing user if already registered
+     */
+    public function portalLogin(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'fullName' => 'required|string|min:3|max:100',
+                'corporateIdNip' => 'required|string|min:3|max:50',
+                'directorate' => 'required|string|min:2|max:100',
+                'invitationCode' => 'required|string',
+            ]);
+
+            // Validate invitation code and get organization
+            $organization = Organization::where('portal_invitation_code', $validated['invitationCode'])
+                ->where('portal_invitation_active', true)
+                ->first();
+
+            if (!$organization) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Invalid or inactive invitation code',
+                    'code' => 'INVALID_INVITATION_CODE'
+                ], 400);
+            }
+
+            // Log attempt
+            $this->logAuthAction($validated['corporateIdNip'], 'portal_login', 'pending', $request);
+
+            // Check if portal user already exists with this NIP
+            $user = User::where('corporate_id_nip', $validated['corporateIdNip'])
+                ->where('organization_code', $organization->code)
+                ->where('user_type', 'PORTAL')
+                ->first();
+
+            $isNewUser = false;
+
+            if ($user) {
+                // Update existing user's name if different
+                if ($user->name !== $validated['fullName']) {
+                    $user->update(['name' => $validated['fullName']]);
+                }
+                $user->update(['last_login' => now()]);
+            } else {
+                // Create new portal user
+                $user = User::create([
+                    'id' => (string) Str::uuid(),
+                    'name' => $validated['fullName'],
+                    'corporate_id_nip' => $validated['corporateIdNip'],
+                    'directorate' => $validated['directorate'],
+                    'organization_code' => $organization->code,
+                    'user_type' => 'PORTAL',
+                    'role' => 'MEMBER', // Portal users use MEMBER role
+                    'status' => 'ACTIVE',
+                    'email' => Str::uuid() . '@portal.local', // Generate dummy email
+                    'password_hash' => null,
+                    'last_login' => now(),
+                ]);
+                $isNewUser = true;
+            }
+
+            // Generate portal token (JWT with 1 hour expiry)
+            $token = $this->authService->generatePortalToken($user);
+
+            // Log success
+            $this->logAuthAction($validated['corporateIdNip'], 'portal_login', 'success', $request, $user->id);
+
+            $statusCode = $isNewUser ? 201 : 200;
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'userId' => $user->id,
+                    'portalToken' => $token,
+                    'expiresIn' => 3600, // 1 hour
+                    'message' => $isNewUser ? 'User registered successfully' : 'User loaded successfully',
+                    'isNewUser' => $isNewUser,
+                ]
+            ], $statusCode);
+        } catch (ValidationException $e) {
+            $this->logAuthAction($request->input('corporateIdNip', 'unknown'), 'portal_login', 'failed', $request);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Validation failed',
+                'code' => 'VALIDATION_ERROR',
+                'details' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            $this->logAuthAction($request->input('corporateIdNip', 'unknown'), 'portal_login', 'failed', $request);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Portal login failed',
+                'code' => 'PORTAL_LOGIN_ERROR'
+            ], 500);
         }
     }
 

@@ -25,6 +25,8 @@ class DatabaseSeeder extends Seeder
                 'name' => 'Deraly Development',
                 'description' => 'Development organization for testing',
                 'status' => 'ACTIVE',
+                'portal_invitation_code' => $this->generatePortalInvitationCode(),
+                'portal_invitation_active' => true,
             ]
         );
 
@@ -55,5 +57,22 @@ class DatabaseSeeder extends Seeder
                 'email_verified' => true,
             ]
         );
+
+        // Call role and permission seeder
+        $this->call(RolePermissionSeeder::class);
+    }
+
+    /**
+     * Generate unique portal invitation code
+     * 
+     * @return string
+     */
+    private function generatePortalInvitationCode(): string
+    {
+        do {
+            $code = 'PORTAL-' . strtoupper(Str::random(8));
+        } while (Organization::where('portal_invitation_code', $code)->exists());
+
+        return $code;
     }
 }

@@ -29,6 +29,9 @@ class User extends Authenticatable
         'organization_code',
         'email_verified',
         'last_login',
+        'corporate_id_nip',
+        'directorate',
+        'user_type',
     ];
 
     protected $hidden = [
@@ -69,5 +72,31 @@ class User extends Authenticatable
     public function roles(): BelongsToMany
     {
         return $this->belongsToMany(Role::class, 'staff_roles', 'staff_id', 'role_id');
+    }
+
+    public function bids(): HasMany
+    {
+        return $this->hasMany(Bid::class, 'bidder_id', 'id');
+    }
+
+    public function bidNotifications(): HasMany
+    {
+        return $this->hasMany(BidNotification::class, 'user_id', 'id');
+    }
+
+    /**
+     * Check if user is a portal user (bidder)
+     */
+    public function isPortalUser(): bool
+    {
+        return $this->user_type === 'PORTAL' && !empty($this->corporate_id_nip);
+    }
+
+    /**
+     * Check if user is a staff user (dashboard)
+     */
+    public function isStaffUser(): bool
+    {
+        return $this->user_type === 'STAFF' && !empty($this->email);
     }
 }

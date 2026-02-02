@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Staff Model - Represents staff/users within an organization
@@ -52,11 +53,19 @@ class Staff extends Authenticatable
      */
     public function toStaffArray()
     {
+        // Get current role name from staff_roles junction table
+        $currentRole = DB::table('staff_roles')
+            ->where('staff_roles.staff_id', $this->id)
+            ->where('staff_roles.organization_code', $this->organization_code)
+            ->join('roles', 'staff_roles.role_id', '=', 'roles.id')
+            ->select('roles.name')
+            ->first();
+
         return [
             'id' => $this->id,
             'name' => $this->name,
             'email' => $this->email,
-            'role' => $this->role,
+            'role' => $currentRole?->name ?? $this->role,
             'status' => $this->status,
             'joinDate' => $this->created_at?->format('Y-m-d'),
             'lastActivity' => $this->last_login?->toIso8601String() ?? $this->updated_at?->toIso8601String(),
