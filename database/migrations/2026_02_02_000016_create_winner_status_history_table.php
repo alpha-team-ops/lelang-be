@@ -16,6 +16,7 @@ return new class extends Migration
             $table->uuid('changed_by')->nullable();
             $table->text('notes')->nullable();
             $table->timestamp('changed_at')->useCurrent();
+            $table->timestamps();
 
             // Foreign keys
             $table->foreign('winner_bid_id')->references('id')->on('winner_bids')->onDelete('cascade');

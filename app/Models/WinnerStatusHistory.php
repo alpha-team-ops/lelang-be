@@ -22,9 +22,9 @@ class WinnerStatusHistory extends Model
 
     protected $casts = [
         'changed_at' => 'datetime',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
-
-    const UPDATED_AT = null;
 
     /**
      * Relationships
