@@ -120,6 +120,27 @@ class Auction extends Model
     }
 
     /**
+     * Check if auction has ended
+     * Used for winner bid creation validation
+     * 
+     * @return bool True if auction has ended, false otherwise
+     */
+    public function hasEnded(): bool
+    {
+        return $this->calculateStatus() === 'ENDED';
+    }
+
+    /**
+     * Check if auction is currently live
+     * 
+     * @return bool True if auction is live, false otherwise
+     */
+    public function isLive(): bool
+    {
+        return $this->calculateStatus() === 'LIVE';
+    }
+
+    /**
      * Get bidder name safely (handles invalid UUID in current_bidder field)
      */
     public function getBidderName(): ?string
@@ -145,6 +166,83 @@ class Auction extends Model
     public function getCurrentStatus(): string
     {
         return $this->calculateStatus();
+    }
+
+    /**
+     * Auto-create winner bid when auction ends
+     * This is called automatically when auction status changes to ENDED
+     * 
+     * @return WinnerBid|null The created winner bid, or null if failed
+     */
+    public function autoCreateWinner(): ?WinnerBid
+    {
+        // Only create if auction has ended and no winner exists yet
+        if (!$this->hasEnded()) {
+            return null;
+        }
+
+        // Check if winner already exists
+        $existingWinner = WinnerBid::where('auction_id', $this->id)->first();
+        if ($existingWinner) {
+            return $existingWinner;
+        }
+
+        // Get highest bid for this auction
+        $highestBid = $this->bids()
+                           ->where('status', 'CURRENT')
+                           ->orderBy('bid_amount', 'desc')
+                           ->first();
+
+        // If no valid bid, cannot create winner
+        if (!$highestBid) {
+            return null;
+        }
+
+        // Get bidder details
+        $bidder = User::find($highestBid->bidder_id);
+        if (!$bidder) {
+            return null;
+        }
+
+        // Calculate unique participant count
+        $participantCount = $this->bids()
+                                 ->distinct('bidder_id')
+                                 ->count();
+
+        // Create winner bid
+        try {
+            $winnerBid = WinnerBid::create([
+                'auction_id' => $this->id,
+                'auction_title' => $this->title,
+                'serial_number' => $this->serial_number ?? null,
+                'category' => $this->category ?? null,
+                'bidder_id' => $bidder->id,
+                'full_name' => $bidder->name,
+                'corporate_id_nip' => $bidder->corporate_id_nip ?? null,
+                'directorate' => $bidder->directorate ?? null,
+                'organization_code' => $this->organization_code,
+                'winning_bid' => $highestBid->bid_amount,
+                'total_participants' => $participantCount,
+                'auction_end_time' => $this->end_time,
+                'status' => WinnerBid::STATUS_PAYMENT_PENDING,
+            ]);
+
+            // Record status history
+            WinnerStatusHistory::create([
+                'winner_bid_id' => $winnerBid->id,
+                'status' => WinnerBid::STATUS_PAYMENT_PENDING,
+                'notes' => 'Auto-created when auction ended',
+            ]);
+
+            return $winnerBid;
+        } catch (\Exception $e) {
+            // Log error but don't throw
+            \Illuminate\Support\Facades\Log::error('Failed to auto-create winner bid', [
+                'auction_id' => $this->id,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 
     /**

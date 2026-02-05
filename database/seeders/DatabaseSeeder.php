@@ -60,6 +60,12 @@ class DatabaseSeeder extends Seeder
 
         // Call role and permission seeder
         $this->call(RolePermissionSeeder::class);
+
+        // Call auction seeder
+        $this->call(AuctionSeeder::class);
+
+        // Call bid seeder
+        $this->call(BidSeeder::class);
     }
 
     /**

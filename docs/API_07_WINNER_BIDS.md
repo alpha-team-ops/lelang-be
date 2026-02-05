@@ -143,19 +143,161 @@ CANCELLED
 
 ---
 
-### 5. Create Winner Bid (Auto - Internal)
-**Endpoint:** `POST /api/v1/bids/winners` (Internal use)
+### 5. Create Winner Bid (Lock Auction)
+**Endpoint:** `POST /api/v1/bids/winners`
 
-**Auto-triggered:** When auction ends and highest bidder determined
+**⚠️ CRITICAL:** This endpoint creates a **WINNER BID = AUCTION LOCK**
 
-**Logic:**
-- Fetch highest bid from bids table
-- Get winner staff details
+**Constraints:**
+- ✅ Auction status MUST be `ENDED` (end_time < now)
+- ✅ Cannot create winner bid for DRAFT, SCHEDULED, or LIVE auctions
+- ✅ Only ONE winner bid per auction (prevent duplicates)
+- ✅ Requires at least one valid bid (status = CURRENT)
+
+**Request Body:**
+```json
+{
+  "auctionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response (201 CREATED):**
+```json
+{
+  "success": true,
+  "message": "Winner bid created and auction locked",
+  "data": {
+    "id": "wb-uuid",
+    "auctionId": "auction-uuid",
+    "auctionTitle": "Laptop ASUS ROG Gaming",
+    "fullName": "Ahmad Rizki",
+    "winningBid": 8500000,
+    "status": "PAYMENT_PENDING",
+    "paymentDueDate": "2026-02-04T14:58:47Z"
+  }
+}
+```
+
+**Error Responses:**
+
+**422 - Auction Not Ended:**
+```json
+{
+  "success": false,
+  "error": "Cannot create winner bid for auction that has not ended",
+  "code": "AUCTION_NOT_ENDED",
+  "details": {
+    "auctionStatus": "LIVE",
+    "currentTime": "2026-02-02T15:00:00Z",
+    "auctionEndTime": "2026-02-07T14:58:47Z"
+  }
+}
+```
+
+**409 - Auction Already Locked:**
+```json
+{
+  "success": false,
+  "error": "Winner bid already exists for this auction (auction is already locked)",
+  "code": "WINNER_ALREADY_EXISTS",
+  "data": { /* existing winner bid */ }
+}
+```
+
+**400 - No Valid Bid:**
+```json
+{
+  "success": false,
+  "error": "No valid bid found for this auction",
+  "code": "NO_VALID_BID"
+}
+```
+
+**Auto-triggered Logic:**
+- Fetch highest bid from bids table (status = CURRENT)
+- Get winner user details
 - Get auction details
 - Create WinnerBid record
 - Set paymentDueDate = now + 48 hours
 - Set status = PAYMENT_PENDING
+- Record status history
 - Send notification to winner
+
+**Permissions Required:**
+- Internal use (can be called by scheduled job)
+
+---
+
+### 6. Update Payment Due Date
+**Endpoint:** `PUT /api/v1/bids/winners/:id/payment-due-date`
+
+**Request Body:**
+```json
+{
+  "paymentDueDate": "2026-02-10 15:30:00",
+  "notes": "Extended payment deadline per request"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Payment due date updated successfully",
+  "data": {
+    "id": "wb-uuid",
+    "oldPaymentDueDate": "2026-02-04T14:58:47Z",
+    "newPaymentDueDate": "2026-02-10T15:30:00Z",
+    "updatedAt": "2026-02-02T15:30:00Z"
+  }
+}
+```
+
+**Validation Rules:**
+- `paymentDueDate` must be in format `YYYY-MM-DD HH:mm:ss`
+- Must be a future date (after current time)
+- `notes` is optional, max 500 characters
+
+**Business Rules:**
+- ✅ Can only update when status is PAYMENT_PENDING, PAID, or SHIPPED
+- ❌ Cannot update when status is COMPLETED or CANCELLED
+- ✅ Updates are recorded in status history if notes provided
+- ✅ Maintains audit trail of payment date changes
+
+**Error Responses:**
+
+**404 - Winner Not Found:**
+```json
+{
+  "success": false,
+  "error": "Winner bid not found",
+  "code": "WINNER_NOT_FOUND"
+}
+```
+
+**422 - Invalid Status:**
+```json
+{
+  "success": false,
+  "error": "Cannot update payment due date for COMPLETED status",
+  "code": "INVALID_STATUS_FOR_UPDATE"
+}
+```
+
+**422 - Validation Error:**
+```json
+{
+  "success": false,
+  "error": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "errors": {
+    "paymentDueDate": ["The payment due date must be a date after now."]
+  }
+}
+```
+
+**Permissions Required:**
+- `manage_auctions`
 
 ---
 

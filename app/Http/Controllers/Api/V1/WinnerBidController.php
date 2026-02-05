@@ -195,6 +195,9 @@ class WinnerBidController extends Controller
     /**
      * Create winner bid (internal - auto-triggered when auction ends)
      * POST /api/v1/bids/winners
+     * 
+     * IMPORTANT: This endpoint only creates winner bids for ENDED auctions.
+     * A winner bid is essentially an AUCTION LOCK - it represents the final outcome.
      */
     public function create(Request $request)
     {
@@ -205,9 +208,35 @@ class WinnerBidController extends Controller
 
             $auction = Auction::find($validated['auctionId']);
 
+            // ============ CRITICAL VALIDATION: Auction must be ENDED ============
+            if (!$auction->hasEnded()) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Cannot create winner bid for auction that has not ended',
+                    'code' => 'AUCTION_NOT_ENDED',
+                    'details' => [
+                        'auctionStatus' => $auction->status,
+                        'currentTime' => now()->toIso8601String(),
+                        'auctionEndTime' => $auction->end_time?->toIso8601String(),
+                    ]
+                ], 422);
+            }
+
+            // Check if winner bid already exists (auction already locked)
+            $existingWinner = WinnerBid::where('auction_id', $auction->id)->first();
+            if ($existingWinner) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Winner bid already exists for this auction (auction is already locked)',
+                    'code' => 'WINNER_ALREADY_EXISTS',
+                    'data' => $existingWinner->toArray(),
+                ], 409);
+            }
+
             // Get highest bid for this auction
             $highestBid = $auction->bids()
                                   ->where('status', 'CURRENT')
+                                  ->orderBy('bid_amount', 'desc')
                                   ->first();
 
             if (!$highestBid) {
@@ -221,17 +250,15 @@ class WinnerBidController extends Controller
             // Get bidder details
             $bidder = User::find($highestBid->bidder_id);
 
-            // Check if winner bid already exists
-            $existingWinner = WinnerBid::where('auction_id', $auction->id)->first();
-            if ($existingWinner) {
+            if (!$bidder) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Winner bid already exists for this auction',
-                    'code' => 'WINNER_ALREADY_EXISTS',
-                ], 409);
+                    'error' => 'Bidder not found',
+                    'code' => 'BIDDER_NOT_FOUND',
+                ], 404);
             }
 
-            // Calculate participant count
+            // Calculate unique participant count
             $participantCount = $auction->bids()
                                        ->distinct('bidder_id')
                                        ->count();
@@ -259,12 +286,13 @@ class WinnerBidController extends Controller
                     'winner_bid_id' => $winnerBid->id,
                     'from_status' => null,
                     'to_status' => WinnerBid::STATUS_PAYMENT_PENDING,
-                    'notes' => 'Winner bid created automatically',
+                    'changed_by' => $request->user()?->id,
+                    'notes' => 'Winner bid created automatically when auction ended',
                 ]);
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Winner bid created successfully',
+                    'message' => 'Winner bid created and auction locked',
                     'data' => $winnerBid->toArray(),
                 ], 201);
             });
@@ -350,5 +378,118 @@ class WinnerBidController extends Controller
                 'pages' => ceil($total / $limit),
             ],
         ]);
+    }
+
+    /**
+     * Update payment due date for a winner bid
+     * PUT /api/v1/bids/winners/:id/payment-due-date
+     */
+    public function updatePaymentDueDate(string $id, Request $request)
+    {
+        try {
+            // Get payment due date from either camelCase or snake_case
+            $paymentDueDate = $request->input('paymentDueDate') ?? $request->input('payment_due_date');
+            $notes = $request->input('notes');
+
+            // Validate
+            if (!$paymentDueDate) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Validation failed',
+                    'code' => 'VALIDATION_ERROR',
+                    'errors' => ['paymentDueDate' => ['The payment due date field is required.']],
+                ], 422);
+            }
+
+            // Validate date format
+            try {
+                $newDueDate = new \DateTime($paymentDueDate);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Validation failed',
+                    'code' => 'VALIDATION_ERROR',
+                    'errors' => ['paymentDueDate' => ['The payment due date must be a valid date format (Y-m-d H:i:s).']],
+                ], 422);
+            }
+
+            // Check if date is in future
+            if ($newDueDate <= new \DateTime('now')) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Validation failed',
+                    'code' => 'VALIDATION_ERROR',
+                    'errors' => ['paymentDueDate' => ['The payment due date must be a date after now.']],
+                ], 422);
+            }
+
+            if ($notes && strlen($notes) > 500) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Validation failed',
+                    'code' => 'VALIDATION_ERROR',
+                    'errors' => ['notes' => ['The notes field must not be greater than 500 characters.']],
+                ], 422);
+            }
+
+            $winner = WinnerBid::find($id);
+
+            if (!$winner) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Winner bid not found',
+                    'code' => 'WINNER_NOT_FOUND',
+                ], 404);
+            }
+
+            // Check if payment_due_date can be updated (not COMPLETED or CANCELLED)
+            if (in_array($winner->status, [WinnerBid::STATUS_COMPLETED, WinnerBid::STATUS_CANCELLED])) {
+                return response()->json([
+                    'success' => false,
+                    'error' => "Cannot update payment due date for {$winner->status} status",
+                    'code' => 'INVALID_STATUS_FOR_UPDATE',
+                ], 422);
+            }
+
+            $oldDueDate = $winner->payment_due_date;
+
+            return DB::transaction(function () use ($winner, $newDueDate, $oldDueDate, $notes, $request) {
+                // Update payment due date
+                $winner->update([
+                    'payment_due_date' => $newDueDate,
+                    'notes' => $notes ?? $winner->notes,
+                ]);
+
+                // Record change in history if notes provided
+                if ($notes) {
+                    WinnerStatusHistory::create([
+                        'winner_bid_id' => $winner->id,
+                        'from_status' => $winner->status,
+                        'to_status' => $winner->status,
+                        'changed_by' => $request->user()?->id,
+                        'notes' => "Payment due date updated from {$oldDueDate?->format('Y-m-d H:i:s')} to {$newDueDate->format('Y-m-d H:i:s')}. {$notes}",
+                    ]);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Payment due date updated successfully',
+                    'data' => [
+                        'id' => $winner->id,
+                        'oldPaymentDueDate' => $oldDueDate?->toIso8601String(),
+                        'newPaymentDueDate' => $newDueDate->toIso8601String(),
+                        'updatedAt' => now()->toIso8601String(),
+                    ],
+                ]);
+            });
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'An error occurred',
+                'code' => 'INTERNAL_ERROR',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 }

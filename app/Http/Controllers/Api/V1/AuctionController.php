@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Auction;
 use App\Models\AuctionImage;
 use App\Models\Organization;
+use App\Events\AuctionUpdated;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
@@ -215,6 +216,11 @@ class AuctionController extends Controller
             }
         }
 
+        // Auto-create winner if auction is already ENDED
+        if ($initialStatus === 'ENDED') {
+            $auction->autoCreateWinner();
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Auction created successfully',
@@ -249,22 +255,34 @@ class AuctionController extends Controller
             ], 404);
         }
 
-        // Cannot update LIVE or ENDED auctions (except status and dates that affect status)
-        $allowedFieldsForLive = ['status', 'start_time', 'end_time'];
-        $hasOnlyAllowedFields = true;
-        
-        foreach ($request->all() as $key => $value) {
-            if (!in_array($key, $allowedFieldsForLive)) {
-                $hasOnlyAllowedFields = false;
-                break;
+        // With manage_auctions permission, can update auction at any status
+        // No restrictions on status
+
+        // Pre-process dates to support multiple formats (ISO8601, standard)
+        if ($request->has('start_time')) {
+            $startTime = $request->input('start_time');
+            try {
+                // Try parsing ISO format and convert to Y-m-d H:i:s
+                $date = \DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $startTime) 
+                    ?: \DateTime::createFromFormat('Y-m-d H:i:s', $startTime)
+                    ?: new \DateTime($startTime);
+                $request->merge(['start_time' => $date->format('Y-m-d H:i:s')]);
+            } catch (\Exception $e) {
+                // Keep original if parsing fails
             }
         }
-        
-        if (in_array($auction->status, ['LIVE', 'ENDED']) && !$hasOnlyAllowedFields) {
-            return response()->json([
-                'success' => false,
-                'message' => 'CANNOT_UPDATE_LIVE'
-            ], 409);
+
+        if ($request->has('end_time')) {
+            $endTime = $request->input('end_time');
+            try {
+                // Try parsing ISO format and convert to Y-m-d H:i:s
+                $date = \DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $endTime) 
+                    ?: \DateTime::createFromFormat('Y-m-d H:i:s', $endTime)
+                    ?: new \DateTime($endTime);
+                $request->merge(['end_time' => $date->format('Y-m-d H:i:s')]);
+            } catch (\Exception $e) {
+                // Keep original if parsing fails
+            }
         }
 
         // Validate request
@@ -299,30 +317,29 @@ class AuctionController extends Controller
             ], 400);
         }
 
-        // Prepare update data
-        $updateData = array_filter([
-            'title' => $validated['title'] ?? null,
-            'description' => $validated['description'] ?? null,
-            'category' => $validated['category'] ?? null,
-            'condition' => $validated['condition'] ?? null,
-            'serial_number' => $validated['serial_number'] ?? null,
-            'item_location' => $validated['item_location'] ?? null,
-            'purchase_year' => $validated['purchase_year'] ?? null,
-            'starting_price' => $validated['starting_price'] ?? null,
-            'reserve_price' => $validated['reserve_price'] ?? null,
-            'bid_increment' => $validated['bid_increment'] ?? null,
-            'start_time' => $validated['start_time'] ?? null,
-            'end_time' => $validated['end_time'] ?? null,
-            'image' => $validated['image'] ?? null,
-        ], function ($value) {
-            return $value !== null;
-        });
+        // Prepare update data - only include validated fields that were actually sent
+        $updateData = [];
+        $fieldsToUpdate = ['title', 'description', 'category', 'condition', 'serial_number', 
+                          'item_location', 'purchase_year', 'starting_price', 'reserve_price', 
+                          'bid_increment', 'start_time', 'end_time', 'image'];
+        
+        foreach ($fieldsToUpdate as $field) {
+            if (array_key_exists($field, $validated) && $validated[$field] !== null) {
+                $updateData[$field] = $validated[$field];
+            }
+        }
 
         // Recalculate status based on current datetime if dates exist
         // This ensures auction status is always accurate even after time has passed
-        if (!isset($validated['status'])) {
-            $startTime = isset($validated['start_time']) ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time'], 'UTC') : $auction->start_time;
-            $endTime = isset($validated['end_time']) ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['end_time'], 'UTC') : $auction->end_time;
+        if (!array_key_exists('status', $validated) || $validated['status'] === null) {
+            // Use app timezone, not UTC
+            $appTimezone = config('app.timezone', 'UTC');
+            $startTime = isset($validated['start_time']) 
+                ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time'], $appTimezone) 
+                : $auction->start_time;
+            $endTime = isset($validated['end_time']) 
+                ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['end_time'], $appTimezone) 
+                : $auction->end_time;
             
             if (!$startTime || !$endTime) {
                 $updateData['status'] = 'DRAFT';
@@ -341,6 +358,11 @@ class AuctionController extends Controller
         // Update auction fields
         $auction->update($updateData);
 
+        // Auto-create winner if auction just became ENDED
+        if (($updateData['status'] ?? $auction->status) === 'ENDED' && $auction->status !== 'ENDED') {
+            $auction->fresh()->autoCreateWinner();
+        }
+
         // Update images if provided
         if (isset($validated['images'])) {
             AuctionImage::where('auction_id', $id)->delete();
@@ -357,7 +379,7 @@ class AuctionController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Auction updated successfully',
-            'data' => $auction->fresh()->toAdminArray()
+            'data' => Auction::find($id)->toAdminArray()
         ]);
     }
 
@@ -388,14 +410,7 @@ class AuctionController extends Controller
             ], 404);
         }
 
-        // Can only delete DRAFT auctions
-        if ($auction->status !== 'DRAFT') {
-            return response()->json([
-                'success' => false,
-                'message' => 'CANNOT_DELETE_LIVE'
-            ], 409);
-        }
-
+        // With manage_auctions permission, can delete auction at any status
         // Delete images first
         AuctionImage::where('auction_id', $id)->delete();
 
@@ -409,8 +424,9 @@ class AuctionController extends Controller
     }
 
     /**
-     * Get all portal auctions (LIVE only - public)
+     * Get all LIVE auctions for portal (public)
      * GET /api/v1/auctions/portal/list
+     * Only shows LIVE auctions (start_time <= now <= end_time)
      */
     public function portalList(Request $request): JsonResponse
     {
@@ -425,9 +441,11 @@ class AuctionController extends Controller
             ], 400);
         }
 
-        // Filter: only auctions that are currently LIVE (start_time <= now <= end_time)
+        // Filter: Only LIVE auctions (start_time <= now <= end_time)
         $now = now();
         $query = Auction::where('organization_code', $orgCode)
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
             ->where('start_time', '<=', $now)
             ->where('end_time', '>=', $now);
 
@@ -467,13 +485,23 @@ class AuctionController extends Controller
     /**
      * Get single portal auction by ID (public)
      * GET /api/v1/auctions/portal/:id
+     * Allows viewing DRAFT auctions for editing, and LIVE auctions for bidding
      */
     public function portalShow(string $id): JsonResponse
     {
         $now = now();
         $auction = Auction::where('id', $id)
-            ->where('start_time', '<=', $now)
-            ->where('end_time', '>=', $now)
+            ->where(function ($q) use ($now) {
+                // LIVE auctions: start_time <= now <= end_time
+                $q->where(function ($subQ) use ($now) {
+                    $subQ->whereNotNull('start_time')
+                         ->whereNotNull('end_time')
+                         ->where('start_time', '<=', $now)
+                         ->where('end_time', '>=', $now);
+                })
+                // OR DRAFT auctions: status = DRAFT
+                ->orWhere('status', 'DRAFT');
+            })
             ->first();
 
         if (!$auction) {
@@ -483,9 +511,7 @@ class AuctionController extends Controller
             ], 404);
         }
 
-        // Increment view count
-        $auction->increment('view_count');
-
+        // View count increment handled by recordView() endpoint when FE triggers it
         return response()->json([
             'success' => true,
             'data' => $auction->toPortalArray()
@@ -668,6 +694,11 @@ class AuctionController extends Controller
         // Update if status has changed
         if ($newStatus && $auction->status !== $newStatus) {
             $auction->update(['status' => $newStatus]);
+            
+            // Auto-create winner if auction just ended
+            if ($newStatus === 'ENDED') {
+                $auction->autoCreateWinner();
+            }
         }
     }
 
@@ -709,6 +740,9 @@ class AuctionController extends Controller
         }
 
         $auction->increment('view_count');
+
+        // Broadcast view count update via WebSocket
+        broadcast(new AuctionUpdated($auction));
 
         return response()->json([
             'success' => true,

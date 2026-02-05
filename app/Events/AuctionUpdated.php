@@ -35,11 +35,9 @@ class AuctionUpdated implements ShouldBroadcast
     {
         return [
             'id' => $this->auction->id,
-            'title' => $this->auction->title,
             'currentBid' => (float) $this->auction->current_bid,
-            'participantCount' => $this->auction->participant_count,
             'status' => $this->auction->getCurrentStatus(),
-            'endTime' => $this->auction->end_time?->toIso8601String(),
+            'viewCount' => $this->auction->view_count,
         ];
     }
 }

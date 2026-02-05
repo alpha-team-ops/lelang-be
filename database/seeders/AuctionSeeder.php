@@ -14,10 +14,84 @@ class AuctionSeeder extends Seeder
      */
     public function run(): void
     {
-        $orgCode = 'ORG-ALPHACORP-001';
+        $orgCode = 'ORG-DERALY-001';
 
-        // Create 5 sample auctions with different statuses
+        // Create 8 sample auctions with different statuses including ENDED auctions
         $auctions = [
+            // ========== ENDED AUCTIONS (untuk testing winner bid) ==========
+            [
+                'id' => Str::uuid()->toString(),
+                'organization_code' => $orgCode,
+                'title' => 'MacBook Pro 16" M3 Max',
+                'description' => 'MacBook Pro 16-inch with M3 Max chip. 36GB unified memory. 1TB SSD. Like new condition.',
+                'category' => 'Elektronik',
+                'condition' => 'Bekas - Sangat Baik',
+                'serial_number' => 'MAC-PRO-2024-M3',
+                'item_location' => 'Jakarta',
+                'purchase_year' => 2024,
+                'starting_price' => 20000000,
+                'reserve_price' => 25000000,
+                'bid_increment' => 500000,
+                'current_bid' => 28000000,
+                'total_bids' => 15,
+                'status' => 'ENDED',
+                'start_time' => Carbon::now()->subDays(10),
+                'end_time' => Carbon::now()->subDays(3),  // Ended 3 days ago
+                'seller' => 'Admin',
+                'current_bidder' => 'Pembeli_789',
+                'image' => '💻',
+                'view_count' => 524,
+                'participant_count' => 15,
+            ],
+            [
+                'id' => Str::uuid()->toString(),
+                'organization_code' => $orgCode,
+                'title' => 'Apple Watch Series 9 Ultra',
+                'description' => 'Apple Watch Series 9 Ultra Titanium. 49mm display. All sports bands included. Perfect condition.',
+                'category' => 'Elektronik',
+                'condition' => 'Bekas - Sangat Baik',
+                'serial_number' => 'AW-ULTRA-2024-001',
+                'item_location' => 'Surabaya',
+                'purchase_year' => 2024,
+                'starting_price' => 5000000,
+                'reserve_price' => 6500000,
+                'bid_increment' => 150000,
+                'current_bid' => 7200000,
+                'total_bids' => 22,
+                'status' => 'ENDED',
+                'start_time' => Carbon::now()->subDays(7),
+                'end_time' => Carbon::now()->subDays(2),  // Ended 2 days ago
+                'seller' => 'Admin',
+                'current_bidder' => 'Pembeli_321',
+                'image' => '⌚',
+                'view_count' => 456,
+                'participant_count' => 22,
+            ],
+            [
+                'id' => Str::uuid()->toString(),
+                'organization_code' => $orgCode,
+                'title' => 'iPad Pro 12.9" M2',
+                'description' => 'iPad Pro 12.9-inch with M2 chip. 256GB storage. WiFi+Cellular. Includes Apple Pencil and keyboard case.',
+                'category' => 'Elektronik',
+                'condition' => 'Bekas - Baik',
+                'serial_number' => 'IPD-PRO-2024-M2',
+                'item_location' => 'Bandung',
+                'purchase_year' => 2023,
+                'starting_price' => 12000000,
+                'reserve_price' => 14000000,
+                'bid_increment' => 350000,
+                'current_bid' => 15500000,
+                'total_bids' => 10,
+                'status' => 'ENDED',
+                'start_time' => Carbon::now()->subDays(5),
+                'end_time' => Carbon::now()->subDays(1),  // Ended 1 day ago
+                'seller' => 'Admin',
+                'current_bidder' => 'Pembeli_654',
+                'image' => '📱',
+                'view_count' => 312,
+                'participant_count' => 10,
+            ],
+            // ========== LIVE AUCTIONS (existing) ==========
             [
                 'id' => Str::uuid()->toString(),
                 'organization_code' => $orgCode,
@@ -169,8 +243,8 @@ class AuctionSeeder extends Seeder
                 'updated_at' => now(),
             ]);
 
-            // Add sample images for LIVE and ENDING auctions
-            if (in_array($auction['status'], ['LIVE', 'ENDING'])) {
+            // Add sample images for LIVE, ENDING, and ENDED auctions
+            if (in_array($auction['status'], ['LIVE', 'ENDING', 'ENDED'])) {
                 DB::table('auction_images')->insert([
                     'id' => Str::uuid()->toString(),
                     'auction_id' => $auction['id'],
@@ -190,9 +264,9 @@ class AuctionSeeder extends Seeder
         }
 
         echo "✓ Auctions seeded successfully\n";
-        echo "  - 5 sample auctions created\n";
+        echo "  - 8 sample auctions created\n";
+        echo "  - 3 ENDED auctions (ready for winner bid testing)\n";
         echo "  - 3 LIVE auctions with images\n";
-        echo "  - 1 ENDING auction with images\n";
         echo "  - 1 DRAFT auction\n";
         echo "  - 1 SCHEDULED auction\n";
     }

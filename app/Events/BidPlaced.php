@@ -34,11 +34,9 @@ class BidPlaced implements ShouldBroadcast
     public function broadcastWith(): array
     {
         return [
-            'id' => $this->bid->id,
             'auctionId' => $this->bid->auction_id,
+            'currentBid' => (float) $this->bid->bid_amount,
             'bidderName' => $this->bid->bidder?->name ?? 'Anonymous',
-            'bidAmount' => (float) $this->bid->bid_amount,
-            'status' => $this->bid->status,
             'timestamp' => $this->bid->bid_timestamp?->toIso8601String(),
         ];
     }

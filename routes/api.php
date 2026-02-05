@@ -10,9 +10,14 @@ use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\AuctionController;
 use App\Http\Controllers\Api\V1\BidController;
 use App\Http\Controllers\Api\V1\WinnerBidController;
+use App\Http\Controllers\Api\V1\ImageUploadController;
+use App\Http\Controllers\Api\V1\HealthController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
+    // Public Health Check Route
+    Route::get('/health', [HealthController::class, 'check']);
+
     // Public Auth Routes
     Route::prefix('auth')->group(function () {
         Route::post('/login', [AuthController::class, 'login']);
@@ -108,5 +113,14 @@ Route::prefix('v1')->group(function () {
         Route::get('/{id}', [WinnerBidController::class, 'show'])->middleware('permission:manage_auctions');
         Route::get('/{id}/history', [WinnerBidController::class, 'statusHistory'])->middleware('permission:manage_auctions');
         Route::put('/{id}/status', [WinnerBidController::class, 'updateStatus'])->middleware('permission:manage_auctions');
+        Route::put('/{id}/payment-due-date', [WinnerBidController::class, 'updatePaymentDueDate'])->middleware('permission:manage_auctions');
+    });
+
+    // Image Upload Routes
+    Route::prefix('images')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::post('/upload', [ImageUploadController::class, 'upload'])->middleware('permission:manage_auctions');
+        Route::post('/bulk-upload', [ImageUploadController::class, 'bulkUpload'])->middleware('permission:manage_auctions');
+        Route::delete('/{path}', [ImageUploadController::class, 'delete'])->middleware('permission:manage_auctions')->where('path', '.*');
+        Route::get('/url/{path}', [ImageUploadController::class, 'getUrl'])->where('path', '.*');
     });
 });
