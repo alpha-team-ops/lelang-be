@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\Events\AuctionEnded;
+use App\Events\AuctionUpdated;
 use App\Models\Auction;
 use App\Models\AuctionImage;
 use Illuminate\Http\Request;
@@ -214,6 +216,9 @@ class AdminAuctionController extends Controller
             $auction->autoCreateWinner();
         }
 
+        // Broadcast auction update to portal/admin clients
+        broadcast(new AuctionUpdated($auction))->toOthers();
+
         return response()->json([
             'success' => true,
             'message' => 'Auction created successfully',
@@ -321,6 +326,11 @@ class AdminAuctionController extends Controller
         // Auto-create winner if auction just became ENDED
         if (($updateData['status'] ?? $auction->status) === 'ENDED' && $auction->status !== 'ENDED') {
             $auction->fresh()->autoCreateWinner();
+            // Broadcast auction ended event to portal/admin clients
+            broadcast(new AuctionEnded($auction->fresh()))->toOthers();
+        } else {
+            // Broadcast auction update to portal/admin clients
+            broadcast(new AuctionUpdated($auction->fresh()))->toOthers();
         }
 
         // Update images if provided
