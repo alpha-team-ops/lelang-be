@@ -136,7 +136,7 @@ class PortalAuctionController extends Controller
     /**
      * Get single LIVE auction (public)
      * GET /api/v1/auctions/{id}?invitation_code=PORT-XXXXX
-     * Shows LIVE auctions and ENDED auctions (with winner info)
+     * Portal only shows LIVE auctions
      */
     public function show(string $id, Request $request): JsonResponse
     {
@@ -147,21 +147,15 @@ class PortalAuctionController extends Controller
             : auth()->user()?->organization_code;
 
         $now = now();
+        // Only LIVE auctions
         $auction = Auction::where('id', $id)
             ->when($orgCode, function ($q) use ($orgCode) {
                 return $q->where('organization_code', $orgCode);
             })
-            ->where(function ($q) use ($now) {
-                // LIVE auctions: start_time <= now <= end_time
-                $q->where(function ($subQ) use ($now) {
-                    $subQ->whereNotNull('start_time')
-                         ->whereNotNull('end_time')
-                         ->where('start_time', '<=', $now)
-                         ->where('end_time', '>=', $now);
-                })
-                // OR ENDED auctions
-                ->orWhere('status', 'ENDED');
-            })
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->where('start_time', '<=', $now)
+            ->where('end_time', '>=', $now)
             ->first();
 
         if (!$auction) {
@@ -172,30 +166,9 @@ class PortalAuctionController extends Controller
             ], 404);
         }
 
-        // Get response based on auction status
-        $response = $auction->toPortalArray();
-        
-        // If auction is ENDED, include winner info
-        if ($auction->status === 'ENDED') {
-            // Auto-create winner if not exists yet
-            $winner = $auction->winnerBid()->first();
-            if (!$winner) {
-                $winner = $auction->autoCreateWinner();
-            }
-            
-            if ($winner) {
-                $response['winner'] = [
-                    'id' => $winner->id,
-                    'fullName' => $winner->full_name,
-                    'winningBid' => (float) $winner->winning_bid,
-                    'status' => $winner->status,
-                ];
-            }
-        }
-
         return response()->json([
             'success' => true,
-            'data' => $response
+            'data' => $auction->toPortalArray()
         ]);
     }
 
