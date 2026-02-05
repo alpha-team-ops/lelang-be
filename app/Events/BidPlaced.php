@@ -36,6 +36,7 @@ class BidPlaced implements ShouldBroadcast
         return [
             'auctionId' => $this->bid->auction_id,
             'currentBid' => (float) $this->bid->bid_amount,
+            'participantCount' => (int) $this->bid->auction->participant_count,
             'bidderName' => $this->bid->bidder?->name ?? 'Anonymous',
             'timestamp' => $this->bid->bid_timestamp?->toIso8601String(),
         ];
