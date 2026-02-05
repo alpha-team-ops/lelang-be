@@ -1,22 +1,19 @@
 <?php
 
-namespace App\Http\Controllers\Api\V1;
+namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Models\Auction;
 use App\Models\AuctionImage;
-use App\Models\Organization;
-use App\Events\AuctionUpdated;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
-use Carbon\Carbon;
 
-class AuctionController extends Controller
+class AdminAuctionController extends Controller
 {
     /**
-     * Get all admin auctions with filters
-     * GET /api/v1/auctions
+     * Get all auctions (admin only)
+     * GET /api/v1/admin/auctions
      */
     public function index(Request $request): JsonResponse
     {
@@ -71,8 +68,8 @@ class AuctionController extends Controller
     }
 
     /**
-     * Get specific auction by ID
-     * GET /api/v1/auctions/:id
+     * Get single auction (admin only)
+     * GET /api/v1/admin/auctions/:id
      */
     public function show(string $id, Request $request): JsonResponse
     {
@@ -98,9 +95,6 @@ class AuctionController extends Controller
 
         // Recalculate status based on current time
         $this->recalculateStatus($auction);
-        
-        // Refresh to get latest status
-        $auction->refresh();
 
         return response()->json([
             'success' => true,
@@ -109,28 +103,34 @@ class AuctionController extends Controller
     }
 
     /**
-     * Create new auction
-     * POST /api/v1/auctions
+     * Create auction (admin only)
+     * POST /api/v1/admin/auctions
      */
     public function store(Request $request): JsonResponse
     {
-        // Get user from request (set by middleware)
-        $user = $request->attributes->get('user') ?: auth()->user();
-        
-        // Check permission
-        if (!$this->hasPermission('manage_auctions', $user)) {
+        $user = $request->user();
+        if (!$user || !$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = $user?->organization_code;
+        $orgCode = $user->organization_code;
         if (!$orgCode) {
             return response()->json([
                 'success' => false,
                 'message' => 'Organization not found'
             ], 400);
+        }
+
+        // Pre-process dates to support multiple formats
+        if ($request->has('start_time')) {
+            $request->merge(['start_time' => $this->parseDateTime($request->input('start_time'))]);
+        }
+
+        if ($request->has('end_time')) {
+            $request->merge(['end_time' => $this->parseDateTime($request->input('end_time'))]);
         }
 
         // Validate request
@@ -139,14 +139,13 @@ class AuctionController extends Controller
             'description' => 'nullable|string',
             'category' => 'nullable|string|max:100',
             'condition' => 'nullable|string|max:100',
-            'serial_number' => 'nullable|string|max:100|unique:auctions,serial_number,NULL,id,organization_code,' . $orgCode,
+            'serial_number' => 'nullable|string|max:100',
             'item_location' => 'nullable|string|max:100',
             'purchase_year' => 'nullable|integer|min:1900|max:' . date('Y'),
             'starting_price' => 'required|numeric|min:0',
-            'reserve_price' => 'nullable|numeric|min:0',
             'bid_increment' => 'required|numeric|min:0',
-            'start_time' => 'nullable|date_format:Y-m-d H:i:s|after:now',
-            'end_time' => 'nullable|date_format:Y-m-d H:i:s|after:start_time',
+            'start_time' => 'nullable|date_format:Y-m-d H:i:s',
+            'end_time' => 'nullable|date_format:Y-m-d H:i:s',
             'image' => 'nullable|string|max:255',
             'images' => 'nullable|array|max:10',
             'images.*' => 'string|url|max:255',
@@ -155,16 +154,10 @@ class AuctionController extends Controller
             'bid_increment.required' => 'Bid increment is required',
         ]);
 
-        // Default reserve_price to starting_price if not provided
-        if (empty($validated['reserve_price'])) {
-            $validated['reserve_price'] = $validated['starting_price'];
-        }
-
         // Create auction
         $auctionId = Str::uuid()->toString();
         
         // Calculate initial status based on start_time and end_time
-        // DRAFT if no dates provided, otherwise based on datetime comparison
         $initialStatus = 'DRAFT';
         if (!empty($validated['start_time']) && !empty($validated['end_time'])) {
             $now = now();
@@ -198,7 +191,7 @@ class AuctionController extends Controller
             'status' => $initialStatus,
             'start_time' => $validated['start_time'] ?? null,
             'end_time' => $validated['end_time'] ?? null,
-            'seller' => auth()->user()?->name ?? 'Admin',
+            'seller' => $user->name ?? 'Admin',
             'view_count' => 0,
             'participant_count' => 0,
             'image' => $validated['image'] ?? null,
@@ -229,23 +222,20 @@ class AuctionController extends Controller
     }
 
     /**
-     * Update auction
-     * PUT /api/v1/auctions/:id
+     * Update auction (admin only)
+     * PUT /api/v1/admin/auctions/:id
      */
     public function update(string $id, Request $request): JsonResponse
     {
-        // Get user from request (set by middleware)
-        $user = $request->attributes->get('user') ?: auth()->user();
-        
-        // Check permission
-        if (!$this->hasPermission('manage_auctions', $user)) {
+        $user = $request->user();
+        if (!$user || !$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = $user?->organization_code;
+        $orgCode = $user->organization_code;
         $auction = Auction::where('id', $id)->where('organization_code', $orgCode)->first();
 
         if (!$auction) {
@@ -255,38 +245,20 @@ class AuctionController extends Controller
             ], 404);
         }
 
-        // With manage_auctions permission, can update auction at any status
-        // No restrictions on status
-
-        // Pre-process dates to support multiple formats (ISO8601, standard)
+        // Pre-process dates to support multiple formats
         if ($request->has('start_time')) {
-            $startTime = $request->input('start_time');
-            try {
-                // Try parsing ISO format and convert to Y-m-d H:i:s
-                $date = \DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $startTime) 
-                    ?: \DateTime::createFromFormat('Y-m-d H:i:s', $startTime)
-                    ?: new \DateTime($startTime);
-                $request->merge(['start_time' => $date->format('Y-m-d H:i:s')]);
-            } catch (\Exception $e) {
-                // Keep original if parsing fails
-            }
+            $request->merge(['start_time' => $this->parseDateTime($request->input('start_time'))]);
         }
 
         if ($request->has('end_time')) {
-            $endTime = $request->input('end_time');
-            try {
-                // Try parsing ISO format and convert to Y-m-d H:i:s
-                $date = \DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $endTime) 
-                    ?: \DateTime::createFromFormat('Y-m-d H:i:s', $endTime)
-                    ?: new \DateTime($endTime);
-                $request->merge(['end_time' => $date->format('Y-m-d H:i:s')]);
-            } catch (\Exception $e) {
-                // Keep original if parsing fails
-            }
+            $request->merge(['end_time' => $this->parseDateTime($request->input('end_time'))]);
         }
 
-        // Validate request
-        $validated = $request->validate([
+        // Build validation rules conditionally
+        // For LIVE/ENDED auctions, relax start_time validation
+        $isAuctionActive = in_array($auction->status, ['LIVE', 'ENDING', 'ENDED']);
+        
+        $rules = [
             'title' => 'nullable|string|max:255',
             'description' => 'nullable|string',
             'category' => 'nullable|string|max:100',
@@ -295,7 +267,6 @@ class AuctionController extends Controller
             'item_location' => 'nullable|string|max:100',
             'purchase_year' => 'nullable|integer|min:1900|max:' . date('Y'),
             'starting_price' => 'nullable|numeric|min:0',
-            'reserve_price' => 'nullable|numeric|min:0',
             'bid_increment' => 'nullable|numeric|min:0',
             'status' => 'nullable|in:DRAFT,SCHEDULED,LIVE,ENDING,ENDED,CANCELLED',
             'start_time' => 'nullable|date_format:Y-m-d H:i:s',
@@ -303,24 +274,15 @@ class AuctionController extends Controller
             'image' => 'nullable|string|max:255',
             'images' => 'nullable|array|max:10',
             'images.*' => 'string|url|max:255',
-        ]);
+        ];
 
-        // Check price validation if both are being updated
-        $startingPrice = $validated['starting_price'] ?? $auction->starting_price;
-        $reservePrice = $validated['reserve_price'] ?? $auction->reserve_price;
+        // Validate request
+        $validated = $request->validate($rules);
 
-        if ((float) $startingPrice > (float) $reservePrice) {
-            return response()->json([
-                'success' => false,
-                'message' => 'INVALID_PRICE',
-                'errors' => ['Starting price must be less than or equal to reserve price']
-            ], 400);
-        }
-
-        // Prepare update data - only include validated fields that were actually sent
+        // Prepare update data
         $updateData = [];
         $fieldsToUpdate = ['title', 'description', 'category', 'condition', 'serial_number', 
-                          'item_location', 'purchase_year', 'starting_price', 'reserve_price', 
+                          'item_location', 'purchase_year', 'starting_price', 
                           'bid_increment', 'start_time', 'end_time', 'image'];
         
         foreach ($fieldsToUpdate as $field) {
@@ -330,9 +292,7 @@ class AuctionController extends Controller
         }
 
         // Recalculate status based on current datetime if dates exist
-        // This ensures auction status is always accurate even after time has passed
         if (!array_key_exists('status', $validated) || $validated['status'] === null) {
-            // Use app timezone, not UTC
             $appTimezone = config('app.timezone', 'UTC');
             $startTime = isset($validated['start_time']) 
                 ? \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $validated['start_time'], $appTimezone) 
@@ -384,23 +344,20 @@ class AuctionController extends Controller
     }
 
     /**
-     * Delete auction
-     * DELETE /api/v1/auctions/:id
+     * Delete auction (admin only)
+     * DELETE /api/v1/admin/auctions/:id
      */
     public function destroy(Request $request, string $id): JsonResponse
     {
-        // Get user from request (set by middleware)
-        $user = $request->attributes->get('user') ?: auth()->user();
-        
-        // Check permission
-        if (!$this->hasPermission('manage_auctions', $user)) {
+        $user = $request->user();
+        if (!$user || !$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = $user?->organization_code;
+        $orgCode = $user->organization_code;
         $auction = Auction::where('id', $id)->where('organization_code', $orgCode)->first();
 
         if (!$auction) {
@@ -410,7 +367,6 @@ class AuctionController extends Controller
             ], 404);
         }
 
-        // With manage_auctions permission, can delete auction at any status
         // Delete images first
         AuctionImage::where('auction_id', $id)->delete();
 
@@ -424,213 +380,20 @@ class AuctionController extends Controller
     }
 
     /**
-     * Get all LIVE auctions for portal (public)
-     * GET /api/v1/auctions/portal/list
-     * Only shows LIVE auctions (start_time <= now <= end_time)
-     */
-    public function portalList(Request $request): JsonResponse
-    {
-        // Get authenticated user from request (set by middleware)
-        $user = $request->user() ?? $request->attributes->get('user');
-        $orgCode = $user?->organization_code ?? $request->get('organization_code');
-        
-        if (!$orgCode) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization not found'
-            ], 400);
-        }
-
-        // Filter: Only LIVE auctions (start_time <= now <= end_time)
-        $now = now();
-        $query = Auction::where('organization_code', $orgCode)
-            ->whereNotNull('start_time')
-            ->whereNotNull('end_time')
-            ->where('start_time', '<=', $now)
-            ->where('end_time', '>=', $now);
-
-        // Apply filters
-        if ($request->has('category')) {
-            $query->where('category', $request->get('category'));
-        }
-
-        // Sorting
-        $sort = $request->get('sort', 'created_at');
-        $order = $request->get('order', 'desc');
-        
-        if (in_array($sort, ['created_at', 'current_bid', 'end_time'])) {
-            $query->orderBy($sort, $order);
-        }
-
-        // Pagination
-        $page = (int) $request->get('page', 1);
-        $limit = min((int) $request->get('limit', 10), 50);
-        $offset = ($page - 1) * $limit;
-
-        $total = $query->count();
-        $auctions = $query->offset($offset)->limit($limit)->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $auctions->map(fn ($auction) => $auction->toPortalArray()),
-            'pagination' => [
-                'total' => $total,
-                'page' => $page,
-                'limit' => $limit,
-                'totalPages' => ceil($total / $limit)
-            ]
-        ]);
-    }
-
-    /**
-     * Get single portal auction by ID (public)
-     * GET /api/v1/auctions/portal/:id
-     * Allows viewing DRAFT auctions for editing, and LIVE auctions for bidding
-     */
-    public function portalShow(string $id): JsonResponse
-    {
-        $now = now();
-        $auction = Auction::where('id', $id)
-            ->where(function ($q) use ($now) {
-                // LIVE auctions: start_time <= now <= end_time
-                $q->where(function ($subQ) use ($now) {
-                    $subQ->whereNotNull('start_time')
-                         ->whereNotNull('end_time')
-                         ->where('start_time', '<=', $now)
-                         ->where('end_time', '>=', $now);
-                })
-                // OR DRAFT auctions: status = DRAFT
-                ->orWhere('status', 'DRAFT');
-            })
-            ->first();
-
-        if (!$auction) {
-            return response()->json([
-                'success' => false,
-                'message' => 'AUCTION_NOT_FOUND'
-            ], 404);
-        }
-
-        // View count increment handled by recordView() endpoint when FE triggers it
-        return response()->json([
-            'success' => true,
-            'data' => $auction->toPortalArray()
-        ]);
-    }
-
-    /**
-     * Search auctions (public)
-     * GET /api/v1/auctions/search
-     */
-    public function search(Request $request): JsonResponse
-    {
-        $orgCode = $request->get('organization_code', auth()->user()?->organization_code);
-        if (!$orgCode) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization not found'
-            ], 400);
-        }
-
-        // Filter: only auctions that are currently LIVE
-        $now = now();
-        $query = Auction::where('organization_code', $orgCode)
-            ->where('start_time', '<=', $now)
-            ->where('end_time', '>=', $now);
-
-        // Search by query (title, description)
-        if ($request->has('query') && !empty($request->get('query'))) {
-            $searchTerm = '%' . $request->get('query') . '%';
-            $query->where(function ($q) use ($searchTerm) {
-                $q->where('title', 'like', $searchTerm)
-                  ->orWhere('description', 'like', $searchTerm);
-            });
-        }
-
-        // Filter by category
-        if ($request->has('category')) {
-            $query->where('category', $request->get('category'));
-        }
-
-        // Pagination
-        $page = (int) $request->get('page', 1);
-        $limit = min((int) $request->get('limit', 10), 50);
-        $offset = ($page - 1) * $limit;
-
-        $total = $query->count();
-        $auctions = $query->offset($offset)->limit($limit)->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $auctions->map(fn ($auction) => $auction->toPortalArray()),
-            'pagination' => [
-                'total' => $total,
-                'page' => $page,
-                'limit' => $limit,
-                'totalPages' => ceil($total / $limit)
-            ]
-        ]);
-    }
-
-    /**
-     * Get auctions by category (public)
-     * GET /api/v1/auctions/category/:category
-     */
-    public function getByCategory(string $category, Request $request): JsonResponse
-    {
-        $orgCode = $request->get('organization_code', auth()->user()?->organization_code);
-        if (!$orgCode) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization not found'
-            ], 400);
-        }
-
-        // Filter: only auctions that are currently LIVE
-        $now = now();
-        $query = Auction::where('organization_code', $orgCode)
-            ->where('category', $category)
-            ->where('start_time', '<=', $now)
-            ->where('end_time', '>=', $now);
-
-        // Pagination
-        $page = (int) $request->get('page', 1);
-        $limit = min((int) $request->get('limit', 10), 50);
-        $offset = ($page - 1) * $limit;
-
-        $total = $query->count();
-        $auctions = $query->offset($offset)->limit($limit)->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $auctions->map(fn ($auction) => $auction->toPortalArray()),
-            'pagination' => [
-                'total' => $total,
-                'page' => $page,
-                'limit' => $limit,
-                'totalPages' => ceil($total / $limit)
-            ]
-        ]);
-    }
-
-    /**
      * Get auctions by status (admin only)
-     * GET /api/v1/auctions/status/:status
+     * GET /api/v1/admin/auctions/status/:status
      */
     public function getByStatus(string $status, Request $request): JsonResponse
     {
-        // Get user from request (set by middleware)
-        $user = $request->attributes->get('user') ?: auth()->user();
-        
-        // Check permission
-        if (!$this->hasPermission('manage_auctions', $user)) {
+        $user = $request->user();
+        if (!$user || !$this->hasPermission('manage_auctions', $user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PERMISSION_DENIED'
             ], 403);
         }
 
-        $orgCode = $user?->organization_code;
+        $orgCode = $user->organization_code;
         $validStatuses = ['DRAFT', 'SCHEDULED', 'LIVE', 'ENDING', 'ENDED', 'CANCELLED'];
 
         if (!in_array($status, $validStatuses)) {
@@ -664,15 +427,10 @@ class AuctionController extends Controller
     }
 
     /**
-     * Check if user has permission
-     */
-    /**
      * Recalculate auction status based on current datetime
-     * This ensures the status is always accurate even after time has passed
      */
     private function recalculateStatus(Auction $auction): void
     {
-        // If no start_time or end_time, keep as DRAFT
         if (!$auction->start_time || !$auction->end_time) {
             if ($auction->status !== 'DRAFT') {
                 $auction->update(['status' => 'DRAFT']);
@@ -702,6 +460,9 @@ class AuctionController extends Controller
         }
     }
 
+    /**
+     * Check if user has permission
+     */
     private function hasPermission(string $permission, $user = null): bool
     {
         $user = $user ?: auth()->user();
@@ -710,12 +471,10 @@ class AuctionController extends Controller
             return false;
         }
 
-        // Check if user is ADMIN - user dapat create auction jika role adalah ADMIN
         if ($user->role === 'ADMIN') {
             return true;
         }
 
-        // Check if permission is in JWT token
         if (isset($user->permissions) && in_array($permission, $user->permissions)) {
             return true;
         }
@@ -724,32 +483,28 @@ class AuctionController extends Controller
     }
 
     /**
-     * Record view on auction
-     * POST /api/v1/auctions/:id/view
+     * Parse datetime string from multiple formats
+     * Supports ISO 8601, MySQL format, and standard DateTime parsing
      */
-    public function recordView(string $id): JsonResponse
+    private function parseDateTime(string $dateString): string
     {
-        $auction = Auction::find($id);
+        // Try specific formats first (strict parsing)
+        $formats = [
+            'Y-m-d\TH:i:s\Z',           // ISO 8601: 2026-02-10T10:30:00Z
+            'Y-m-d\TH:i:s.u\Z',         // ISO 8601 with microseconds
+            'Y-m-d\TH:i:sP',            // ISO 8601 with timezone: 2026-02-10T10:30:00+07:00
+            'Y-m-d H:i:s',              // MySQL format: 2026-02-10 10:30:00
+        ];
 
-        if (!$auction) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Auction not found',
-                'code' => 'AUCTION_NOT_FOUND'
-            ], 404);
+        foreach ($formats as $format) {
+            $date = \DateTime::createFromFormat($format, $dateString);
+            if ($date !== false) {
+                return $date->format('Y-m-d H:i:s');
+            }
         }
 
-        $auction->increment('view_count');
-
-        // Broadcast view count update via WebSocket
-        broadcast(new AuctionUpdated($auction));
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'auctionId' => $auction->id,
-                'viewCount' => $auction->view_count
-            ]
-        ]);
+        // If no format matched, return original string
+        // This will cause validation to fail with proper error message
+        return $dateString;
     }
 }

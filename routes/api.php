@@ -7,11 +7,12 @@ use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationSetupController;
 use App\Http\Controllers\Api\V1\StaffController;
 use App\Http\Controllers\Api\V1\RoleController;
-use App\Http\Controllers\Api\V1\AuctionController;
 use App\Http\Controllers\Api\V1\BidController;
 use App\Http\Controllers\Api\V1\WinnerBidController;
 use App\Http\Controllers\Api\V1\ImageUploadController;
 use App\Http\Controllers\Api\V1\HealthController;
+use App\Http\Controllers\Api\V1\Admin\AdminAuctionController;
+use App\Http\Controllers\Api\V1\Portal\PortalAuctionController;
 
 // API v1 Routes
 Route::prefix('v1')->group(function () {
@@ -70,16 +71,25 @@ Route::prefix('v1')->group(function () {
         Route::delete('/{id}', [RoleController::class, 'destroy'])->middleware('permission:manage_roles');
     });
 
-    // Public Auction Routes (Portal) - WITH AUTHENTICATION
-    Route::prefix('auctions/portal')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
-        Route::get('/list', [AuctionController::class, 'portalList']);
-        Route::get('/{id}', [AuctionController::class, 'portalShow']);
+    // ==================== ADMIN AUCTION ROUTES ====================
+    // Protected Admin Auction Routes (CRUD operations)
+    Route::prefix('admin/auctions')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
+        Route::get('/', [AdminAuctionController::class, 'index'])->middleware('permission:manage_auctions');
+        Route::post('/', [AdminAuctionController::class, 'store'])->middleware('permission:manage_auctions');
+        Route::get('/status/{status}', [AdminAuctionController::class, 'getByStatus'])->middleware('permission:manage_auctions');
+        Route::get('/{id}', [AdminAuctionController::class, 'show'])->middleware('permission:manage_auctions');
+        Route::put('/{id}', [AdminAuctionController::class, 'update'])->middleware('permission:manage_auctions');
+        Route::delete('/{id}', [AdminAuctionController::class, 'destroy'])->middleware('permission:manage_auctions');
     });
 
+    // ==================== PORTAL AUCTION ROUTES ====================
+    // Public Portal Auction Routes (read-only)
     Route::prefix('auctions')->group(function () {
-        Route::get('/search', [AuctionController::class, 'search']);
-        Route::get('/category/{category}', [AuctionController::class, 'getByCategory']);
-        Route::post('/{id}/view', [AuctionController::class, 'recordView']);
+        Route::get('/', [PortalAuctionController::class, 'list']);
+        Route::get('/search', [PortalAuctionController::class, 'search']);
+        Route::get('/category/{category}', [PortalAuctionController::class, 'getByCategory']);
+        Route::get('/{id}', [PortalAuctionController::class, 'show']);
+        Route::post('/{id}/view', [PortalAuctionController::class, 'recordView']);
     });
 
     // Public Bid Routes (Portal - Activity and History don't need auth)
@@ -87,16 +97,6 @@ Route::prefix('v1')->group(function () {
         Route::get('/activity', [BidController::class, 'activity']);
         Route::get('/auction/{auctionId}', [BidController::class, 'getAuctionBids']);
         Route::get('/user/{userId}', [BidController::class, 'userHistory']);
-    });
-
-    // Protected Auction Routes (Admin)
-    Route::prefix('auctions')->middleware(\App\Http\Middleware\AuthenticateApiToken::class)->group(function () {
-        Route::get('/', [AuctionController::class, 'index']);
-        Route::post('/', [AuctionController::class, 'store'])->middleware('permission:manage_auctions');
-        Route::get('/{id}', [AuctionController::class, 'show']);
-        Route::put('/{id}', [AuctionController::class, 'update'])->middleware('permission:manage_auctions');
-        Route::delete('/{id}', [AuctionController::class, 'destroy'])->middleware('permission:manage_auctions');
-        Route::get('/status/{status}', [AuctionController::class, 'getByStatus']);
     });
 
     // Protected Bid Routes (Portal User)
@@ -124,3 +124,4 @@ Route::prefix('v1')->group(function () {
         Route::get('/url/{path}', [ImageUploadController::class, 'getUrl'])->where('path', '.*');
     });
 });
+

@@ -80,6 +80,14 @@ class Auction extends Model
     }
 
     /**
+     * Get winner bid for this auction
+     */
+    public function winnerBid(): HasMany
+    {
+        return $this->hasMany(WinnerBid::class, 'auction_id');
+    }
+
+    /**
      * Get the current bidder (user with highest bid)
      */
     public function currentBidderUser(): BelongsTo
@@ -260,7 +268,6 @@ class Auction extends Model
             'itemLocation' => $this->item_location,
             'purchaseYear' => $this->purchase_year,
             'startingPrice' => (float) $this->starting_price,
-            'reservePrice' => (float) $this->reserve_price,
             'bidIncrement' => (float) $this->bid_increment,
             'currentBid' => (float) $this->current_bid,
             'totalBids' => $this->total_bids,
@@ -290,8 +297,8 @@ class Auction extends Model
             'description' => $this->description,
             'category' => $this->category,
             'condition' => $this->condition,
+            'startingPrice' => (float) $this->starting_price,
             'currentBid' => (float) $this->current_bid,
-            'reservePrice' => (float) $this->reserve_price,
             'bidIncrement' => (float) $this->bid_increment,
             'status' => $this->getCurrentStatus(),
             'endTime' => $this->end_time?->toIso8601String(),
