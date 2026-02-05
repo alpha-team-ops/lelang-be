@@ -189,9 +189,10 @@ class PortalAuctionController extends Controller
         }
 
         $auction->increment('view_count');
+        $auction = $auction->fresh(); // Refresh untuk dapat data terbaru
 
         // Broadcast view count update via WebSocket
-        broadcast(new AuctionUpdated($auction));
+        broadcast(new AuctionUpdated($auction))->toOthers();
 
         return response()->json([
             'success' => true,
