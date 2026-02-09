@@ -12,6 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Disable ValidatePostSize for image upload routes - we handle size validation in controller
+        $middleware->remove(\Illuminate\Http\Middleware\ValidatePostSize::class);
+        
         $middleware->alias([
             'auth:api' => \App\Http\Middleware\AuthenticateApiToken::class,
             'permission' => \App\Http\Middleware\CheckPermission::class,

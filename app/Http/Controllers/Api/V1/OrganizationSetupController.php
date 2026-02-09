@@ -86,6 +86,22 @@ class OrganizationSetupController
                         'updated_at' => now(),
                     ]);
 
+                // Assign user to Admin role via staff_roles
+                $adminRole = Role::where('organization_code', $organizationCode)
+                    ->where('name', 'Admin')
+                    ->first();
+                
+                if ($adminRole) {
+                    DB::table('staff_roles')->insert([
+                        'id' => \Illuminate\Support\Str::uuid(),
+                        'staff_id' => $user->id,
+                        'role_id' => $adminRole->id,
+                        'organization_code' => $organizationCode,
+                        'assigned_at' => now(),
+                        'assigned_by' => $user->id,
+                    ]);
+                }
+
                 // Log audit action
                 $this->logAuditAction($user->id, 'create_organization', 'organization', $organizationCode, null, [
                     'name' => $organizationName,

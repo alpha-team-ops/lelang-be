@@ -186,7 +186,6 @@ class AdminAuctionController extends Controller
             'item_location' => $validated['item_location'] ?? null,
             'purchase_year' => $validated['purchase_year'] ?? null,
             'starting_price' => $validated['starting_price'],
-            'reserve_price' => $validated['reserve_price'],
             'bid_increment' => $validated['bid_increment'],
             'current_bid' => $validated['starting_price'],
             'total_bids' => 0,

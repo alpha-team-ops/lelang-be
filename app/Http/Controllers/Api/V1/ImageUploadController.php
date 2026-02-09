@@ -76,12 +76,46 @@ class ImageUploadController extends Controller
     public function bulkUpload(Request $request): JsonResponse
     {
         try {
-            // Get all files with key 'files'
-            $files = $request->file('files');
+            $files = [];
             
-            // If only one file or no files
-            if (!is_array($files)) {
-                $files = $files ? [$files] : [];
+            // Method 1: Try to get via Laravel's file() helper
+            $requestFiles = $request->file('files');
+            
+            // Handle different structures
+            if (is_array($requestFiles)) {
+                // Multiple files sent as array
+                $files = $requestFiles;
+            } elseif ($requestFiles instanceof \Illuminate\Http\UploadedFile) {
+                // Single file
+                $files = [$requestFiles];
+            }
+            
+            // Method 2: If Method 1 failed, try allFiles()
+            if (empty($files)) {
+                $allFiles = $request->allFiles();
+                
+                if (isset($allFiles['files'])) {
+                    $f = $allFiles['files'];
+                    if (is_array($f)) {
+                        $files = $f;
+                    } else {
+                        $files = [$f];
+                    }
+                }
+            }
+            
+            // Method 3: Check allFiles() for indexed format (files[0], files[1], etc)
+            if (empty($files)) {
+                $allFiles = $request->allFiles();
+                foreach ($allFiles as $key => $value) {
+                    if (strpos($key, 'files') === 0) {
+                        if (is_array($value)) {
+                            $files = array_merge($files, $value);
+                        } else {
+                            $files[] = $value;
+                        }
+                    }
+                }
             }
             
             // Validate array
@@ -104,20 +138,36 @@ class ImageUploadController extends Controller
             $errors = [];
 
             foreach ($files as $index => $file) {
-                if (!$file || !$file->isValid()) {
-                    $errors[$index] = 'Invalid file';
+                if (!$file) {
+                    $errors[$index] = 'File is null or missing';
+                    continue;
+                }
+                
+                if (!$file->isValid()) {
+                    $errorCode = $file->getError();
+                    $errorMessage = match($errorCode) {
+                        UPLOAD_ERR_INI_SIZE => 'File exceeds php.ini upload_max_filesize',
+                        UPLOAD_ERR_FORM_SIZE => 'File exceeds form MAX_FILE_SIZE',
+                        UPLOAD_ERR_PARTIAL => 'File was only partially uploaded',
+                        UPLOAD_ERR_NO_FILE => 'No file was uploaded',
+                        UPLOAD_ERR_NO_TMP_DIR => 'Missing temporary folder',
+                        UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk',
+                        UPLOAD_ERR_EXTENSION => 'A PHP extension blocked the upload',
+                        default => 'Unknown upload error (code: ' . $errorCode . ')'
+                    };
+                    $errors[$index] = 'Upload error: ' . $errorMessage;
                     continue;
                 }
                 
                 // Check file type
                 if (!in_array($file->getMimeType(), ['image/jpeg', 'image/png', 'image/gif', 'image/webp'])) {
-                    $errors[$index] = 'Invalid image format. Allowed: jpeg, png, gif, webp';
+                    $errors[$index] = 'Invalid image format. Allowed: jpeg, png, gif, webp. Got: ' . $file->getMimeType();
                     continue;
                 }
                 
                 // Check file size (max 5MB)
                 if ($file->getSize() > 5120 * 1024) {
-                    $errors[$index] = 'File size exceeds 5MB limit';
+                    $errors[$index] = 'File size exceeds 5MB limit (size: ' . round($file->getSize() / 1024 / 1024, 2) . 'MB)';
                     continue;
                 }
                 
@@ -143,15 +193,32 @@ class ImageUploadController extends Controller
                 }
             }
 
+            $statusCode = 201;
+            $message = 'Images uploaded successfully';
+            $success = true;
+
+            // Determine response status based on upload results
+            if (!empty($errors) && empty($uploadedFiles)) {
+                // All files failed
+                $statusCode = 422;
+                $message = 'Image upload failed';
+                $success = false;
+            } elseif (!empty($errors)) {
+                // Some files failed (partial success)
+                $statusCode = 201;
+                $message = 'Images uploaded with errors';
+                $success = false;
+            }
+
             return response()->json([
-                'success' => empty($errors),
-                'message' => 'Images uploaded successfully',
+                'success' => $success,
+                'message' => $message,
                 'data' => [
                     'images' => $uploadedFiles,
                     'count' => count($uploadedFiles),
                     'errors' => !empty($errors) ? $errors : null,
                 ],
-            ], !empty($uploadedFiles) ? 201 : 422);
+            ], $statusCode);
 
         } catch (\Exception $e) {
             return response()->json([

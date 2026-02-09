@@ -118,7 +118,6 @@ class AuthService
         // Get user's roles from staff_roles table for current organization
         $roleIds = \Illuminate\Support\Facades\DB::table('staff_roles')
             ->where('staff_id', $user->id)
-            ->where('organization_code', $user->organization_code)
             ->pluck('role_id')
             ->toArray();
 
@@ -126,9 +125,11 @@ class AuthService
             return [];
         }
 
-        // Get all permissions for user's roles from role_permissions table
+        // Filter roles by organization and get permissions
         $permissions = \Illuminate\Support\Facades\DB::table('role_permissions')
-            ->whereIn('role_id', $roleIds)
+            ->whereIn('role_permissions.role_id', $roleIds)
+            ->join('roles', 'role_permissions.role_id', '=', 'roles.id')
+            ->where('roles.organization_code', $user->organization_code)
             ->join('permissions', 'role_permissions.permission_id', '=', 'permissions.id')
             ->pluck('permissions.name')
             ->unique()

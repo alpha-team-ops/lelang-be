@@ -79,20 +79,55 @@ Upload multiple image files in a single request (max 10 files).
 
 #### Request
 - **Content-Type**: `multipart/form-data`
-- **Field**: `files` (required, array)
-  - Type: Multiple File fields
+- **Field**: `files[0]`, `files[1]`, ..., `files[n]` (required, indexed array)
+  - **IMPORTANT**: Use indexed field names, NOT duplicate field names
   - Max Files: 10
   - Formats: JPEG, PNG, GIF, WebP
   - Max Size per File: 5MB (5120 KB)
 
 #### Example
+
+**✅ CORRECT - Using indexed field names**:
 ```bash
-# Using curl with multiple -F flags
+curl -X POST http://localhost:8000/api/v1/images/bulk-upload \
+  -H "Authorization: Bearer <TOKEN>" \
+  -F "files[0]=@image1.png" \
+  -F "files[1]=@image2.jpg" \
+  -F "files[2]=@image3.gif"
+```
+
+**JavaScript/Axios (CORRECT)**:
+```javascript
+const files = [file1, file2, file3]; // from file input
+const formData = new FormData();
+
+// Append with indexed field names
+files.forEach((file, index) => {
+  formData.append(`files[${index}]`, file);
+});
+
+await axios.post('/api/v1/images/bulk-upload', formData, {
+  headers: {
+    'Content-Type': 'multipart/form-data',
+    'Authorization': `Bearer ${token}`
+  }
+});
+```
+
+**❌ WRONG - Do NOT use duplicate field names**:
+```bash
+# This will only upload the LAST file!
 curl -X POST http://localhost:8000/api/v1/images/bulk-upload \
   -H "Authorization: Bearer <TOKEN>" \
   -F "files=@image1.png" \
-  -F "files=@image2.jpg" \
-  -F "files=@image3.gif"
+  -F "files=@image2.jpg"
+```
+
+```javascript
+// This will ONLY upload the last file!
+const formData = new FormData();
+formData.append('files', file1);
+formData.append('files', file2); // Overwrites file1!
 ```
 
 #### Success Response (201)
