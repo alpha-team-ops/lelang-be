@@ -1,0 +1,13 @@
+[build]
+builder = "heroku.buildpacks"
+
+[[services]]
+name = "web"
+type = "web"
+startCommand = "vendor/bin/heroku-php-apache2 public/"
+
+[[services]]
+name = "reverb"
+type = "web"
+startCommand = "php artisan reverb:start --host=0.0.0.0 --port=8080"
+port = 8080
